@@ -1,0 +1,1458 @@
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+
+let app: ElectronApplication;
+let page: Page;
+let fixture: string;
+let userData: string;
+let mcpRegistryDir: string;
+
+function write(rel: string, content: string) {
+  const abs = path.join(fixture, rel);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content);
+}
+
+function git(...args: string[]) {
+  execFileSync('git', args, { cwd: fixture, stdio: 'pipe' });
+}
+
+test.describe.configure({ mode: 'serial' });
+
+async function readStats(): Promise<{ nodes: number; edges: number }> {
+  const text = (await page.getByTestId('stats').textContent()) ?? '';
+  const m = /(\d+) nodes · (\d+) edges/.exec(text);
+  return { nodes: Number(m?.[1] ?? -1), edges: Number(m?.[2] ?? -1) };
+}
+
+test.beforeAll(async () => {
+  fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-proj-'));
+  userData = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-data-'));
+  mcpRegistryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-mcpreg-'));
+
+  write(
+    'src/app.ts',
+    `import { util } from './util';\nimport { helper } from './lib/helper';\n\nexport function main() {\n  return util() + helper();\n}\n`,
+  );
+  write('src/util.ts', `export function util() {\n  return 1;\n}\n`);
+  write(
+    'src/lib/helper.ts',
+    `import { util } from '../util';\n\nexport function helper() {\n  return util() * 2;\n}\n`,
+  );
+  write('tools/common.py', `def shared():\n    return 42\n`);
+  write('tools/script.py', `from tools.common import shared\n\nprint(shared())\n`);
+  write('README.md', '# fixture\n');
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 'e2e@test.local');
+  git('config', 'user.name', 'E2E');
+  git('config', 'commit.gpgsign', 'false');
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+
+  app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      FLARE_PROJECT: fixture,
+      FLARE_USERDATA: userData,
+      FLARE_MCP_PORT: '7411',
+      FLARE_MCP_REGISTRY: mcpRegistryDir,
+    },
+  });
+  page = await app.firstWindow();
+  page.on('pageerror', (err) => console.log('[pageerror]', err.message, err.stack?.split('\n')[1] ?? ''));
+  page.on('console', (m) => {
+    if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 300));
+  });
+  await page.waitForLoadState('domcontentloaded');
+});
+
+test.afterAll(async () => {
+  await app?.close();
+  for (const dir of [fixture, userData]) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // a lingering process may hold a handle briefly; not a test failure
+    }
+  }
+});
+
+test('a small project boots unfolded; folds all, one, and back via the legend', async () => {
+  await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture));
+  await expect(page.getByTestId('graph-container')).toBeVisible();
+  // this fixture is far below the fold-on-open threshold, so nothing is hidden:
+  // 5 code files; app->util, app->helper, helper->util, script->common = 4 edges
+  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+  await expect(page.getByTestId('legend')).toContainText('src');
+  await expect(page.getByTestId('legend')).toContainText('0/2 folded');
+
+  // fold everything into cluster meta-nodes, then bring it all back
+  await page.getByTestId('legend-fold-all').click();
+  await expect(page.getByTestId('stats')).toHaveText('2 nodes · 0 edges');
+  await expect(page.getByTestId('legend')).toContainText('2/2 folded');
+  await page.getByTestId('legend-unfold-all').click();
+  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+
+  // and a single folder on its own: src/ folds to one card, tools/ stays open
+  await page.getByTestId('legend-src').click();
+  await expect(page.getByTestId('stats')).toContainText('3 nodes');
+  await expect(page.getByTestId('legend')).toContainText('1/2 folded');
+  await page.getByTestId('legend-src').click();
+  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+});
+
+test('file tree lists files and opens the editor with content', async () => {
+  await expect(page.getByTestId('tree-dir-src')).toBeVisible();
+  await page.getByTestId('tree-file-src/app.ts').click();
+  await expect(page.getByTestId('tab-file:src/app.ts')).toBeVisible();
+  const editor = page.getByTestId('editor-src/app.ts');
+  await expect(editor.locator('.view-lines')).toContainText(`import { util } from './util'`);
+});
+
+test('search selects a node and details show dependencies and blast radius', async () => {
+  await page.getByTestId('tab-graph').click();
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await expect(page.getByTestId('details-panel')).toBeVisible();
+  await expect(page.getByTestId('details-panel')).toContainText('src/util.ts');
+  // util.ts is imported by app.ts and helper.ts
+  await expect(page.getByTestId('blast-radius')).toHaveText('2 files downstream');
+  await expect(page.getByTestId('details-panel')).toContainText('src/app.ts');
+  await expect(page.getByTestId('details-panel')).toContainText('src/lib/helper.ts');
+});
+
+test('an external change is flagged as already applied, and the flag is dismissable', async () => {
+  await page.getByTestId('search-input').fill('');
+  fs.appendFileSync(path.join(fixture, 'src', 'util.ts'), '\nexport const extra = 99;\n');
+  // both waits ride on a filesystem-watcher batch, which under load has taken
+  // longer than the default budget
+  await expect(page.getByTestId('unreviewed-badge')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('review-banner')).toContainText('changed since last review', {
+    timeout: 20_000,
+  });
+  // The banner must not imply a gate. The edit is on disk before anyone sees
+  // it, so the copy says so and the action is "dismiss", not "approve".
+  await expect(page.getByTestId('review-banner')).toContainText('already written to disk');
+  await expect(page.getByTestId('btn-approve-all')).toHaveText('Dismiss all');
+
+  // dismissing clears the marker and leaves the file exactly as it was
+  const before = fs.readFileSync(path.join(fixture, 'src', 'util.ts'), 'utf8');
+  await page.getByTestId('btn-approve-all').click();
+  await expect(page.getByTestId('unreviewed-badge')).toBeHidden();
+  expect(fs.readFileSync(path.join(fixture, 'src', 'util.ts'), 'utf8')).toBe(before);
+});
+
+test('graph updates live when a new file with imports appears', async () => {
+  const before = await readStats();
+  write('src/brand-new.ts', `import { util } from './util';\nexport const brandNew = util();\n`);
+  // one node and one edge appear once the watcher batch lands
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes + 1);
+  await expect.poll(async () => (await readStats()).edges).toBe(before.edges + 1);
+  await expect(page.getByTestId('tree-file-src/brand-new.ts')).toBeVisible();
+  await page.getByTestId('btn-approve-all').click();
+});
+
+test('diff vs HEAD opens for a modified file', async () => {
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await page.getByTestId('btn-diff-head').click();
+  const diff = page.getByTestId('diff-src/util.ts');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator('.view-lines').last()).toContainText('extra = 99');
+
+  // The added line has to be visibly green, not merely present. vs-dark's
+  // default diff tints are near-black against this surface, so both panes read
+  // as the same code and the reader has to find the change by eye.
+  const inserted = await diff.locator('.line-insert').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  const [r, g, b] = inserted.match(/\d+/g)!.map(Number);
+  expect(g).toBeGreaterThan(r);
+  expect(g).toBeGreaterThan(b);
+});
+
+test('shadow timeline records snapshots and restores a file', async () => {
+  await page.getByTestId('btn-timeline').click();
+  await expect(page.getByTestId('timeline')).toBeVisible();
+  await expect(page.locator('.snap-row').first()).toBeVisible();
+
+  const target = path.join(fixture, 'src', 'util.ts');
+  const before = fs.readFileSync(target, 'utf8');
+  fs.writeFileSync(target, before + '\nexport const clobbered = true;\n');
+  // wait for the change snapshot to land
+  await expect(page.getByTestId('unreviewed-badge')).toBeVisible();
+  await expect
+    .poll(async () => fs.readFileSync(target, 'utf8').includes('clobbered'), { timeout: 5000 })
+    .toBe(true);
+
+  // details panel -> local history -> revert to the snapshot before the clobber
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await expect(page.getByTestId('details-panel')).toContainText('Local history');
+  const revertLinks = page.getByTestId('details-panel').getByText('revert to this');
+  await expect(revertLinks.first()).toBeVisible({ timeout: 20_000 });
+  const count = await revertLinks.count();
+  expect(count).toBeGreaterThanOrEqual(1);
+  // links are newest-first; pick the one before the clobber snapshot if present
+  await revertLinks.nth(Math.min(1, count - 1)).click();
+  await expect
+    .poll(async () => fs.readFileSync(target, 'utf8').includes('clobbered'), { timeout: 10_000 })
+    .toBe(false);
+});
+
+test('terminal runs a real shell', async () => {
+  const panel = page.getByTestId('terminal-panel');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('.xterm')).toBeVisible();
+  // wait for the shell prompt to initialize, then run a command
+  await page.waitForTimeout(3000);
+  await panel.locator('.terminal-body').click();
+  await page.keyboard.type('echo flare_e2e_ok');
+  await page.keyboard.press('Enter');
+  await expect(panel.locator('.xterm-rows')).toContainText('flare_e2e_ok', { timeout: 20_000 });
+});
+
+test('terminal and command log are one tab group, switchable in both directions', async () => {
+  const panel = page.getByTestId('terminal-panel');
+  const termTab = page.locator('[data-testid^="terminal-tab-"]').first();
+  const body = panel.locator('.terminal-body');
+
+  await page.getByTestId('commands-toggle').click();
+  await expect(page.getByTestId('command-log')).toBeVisible();
+  await expect(body).toBeHidden();
+  // the terminal tab must not still claim to be the selected view
+  await expect(termTab).not.toHaveClass(/\bactive\b/);
+  await expect(termTab).toHaveClass(/\bcurrent\b/);
+
+  // clicking the terminal is the way back — it used to only set which terminal
+  // was active, behind a view still showing the command log
+  await termTab.click();
+  await expect(body).toBeVisible();
+  await expect(page.getByTestId('command-log')).toBeHidden();
+  await expect(termTab).toHaveClass(/\bactive\b/);
+
+  // and the old route still works
+  await page.getByTestId('commands-toggle').click();
+  await expect(page.getByTestId('command-log')).toBeVisible();
+  await page.getByTestId('commands-toggle').click();
+  await expect(body).toBeVisible();
+});
+
+test('connect hint gives the endpoint and the setup for all three agents', async () => {
+  await page.getByTestId('mcp-connect-toggle').click();
+  const url = (await page.getByTestId('mcp-url').textContent()) ?? '';
+  // the project-scoped path is the one that keeps working with several windows
+  expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\//);
+
+  // Claude Code is a command; the other two are config files, in different
+  // formats and different places, and guessing either is worse than no help
+  await expect(page.getByTestId('mcp-snippet')).toContainText('claude mcp add --transport http');
+  await page.getByTestId('mcp-target-codex').click();
+  await expect(page.getByTestId('mcp-snippet')).toContainText('[mcp_servers.flare]');
+  await expect(page.getByTestId('mcp-snippet')).toContainText(url);
+  await page.getByTestId('mcp-target-opencode').click();
+  await expect(page.getByTestId('mcp-snippet')).toContainText('"type": "remote"');
+  await expect(page.getByTestId('mcp-snippet')).toContainText(url);
+
+  await page.getByTestId('mcp-copy-url').click();
+  await expect.poll(() => page.evaluate(() => window.flare!.invoke('clipboard:read', []) as Promise<string>)).toBe(url);
+
+  // Copying is the last thing anyone does here and pasting is the next, so the
+  // panel gets out of the way rather than sitting on top of the terminal.
+  await page.getByTestId('mcp-copy-snippet').click();
+  await expect(page.getByTestId('mcp-connect')).toBeHidden();
+
+  // Escape closes it too, and the panel is bounded so it can never take the
+  // whole terminal panel with nothing left to paste into
+  await page.getByTestId('mcp-connect-toggle').click();
+  await expect(page.getByTestId('mcp-connect')).toBeVisible();
+  const room = await page.evaluate(() => {
+    const panel = document.querySelector('[data-testid="terminal-panel"]')!;
+    const connect = document.querySelector('[data-testid="mcp-connect"]')!;
+    return {
+      ratio: connect.getBoundingClientRect().height / panel.getBoundingClientRect().height,
+      scrollable: getComputedStyle(connect).overflowY,
+    };
+  });
+  expect(room.ratio).toBeLessThanOrEqual(0.55);
+  expect(room.scrollable).toBe('auto');
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('mcp-connect')).toBeHidden();
+  // and the terminal has the focus back, ready for the paste
+  await expect(page.locator('.terminal-body .xterm-helper-textarea').first()).toBeFocused();
+});
+
+test('markdown and images render, with the source one click away', async () => {
+  // a 1x1 transparent PNG, so the image case is a real binary file
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  fs.mkdirSync(path.join(fixture, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(fixture, 'docs', 'dot.png'), png);
+  write(
+    'GUIDE.md',
+    [
+      '# Guide',
+      '',
+      'Some **bold** text with `code` and a [link](https://x.test).',
+      '',
+      '![a dot](docs/dot.png)',
+      '',
+      '- one',
+      '- two',
+      '',
+      '```sh',
+      'npm test',
+      '```',
+    ].join('\n'),
+  );
+  // re-read the tree from disk rather than racing the watcher mid-suite
+  await page.getByTestId('explorer-refresh').click();
+  await expect(page.getByTestId('tree-file-GUIDE.md')).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId('tree-file-GUIDE.md').dblclick();
+
+  // rendered by default: this is what the file is for
+  const doc = page.getByTestId('doc-render');
+  await expect(doc.locator('h1')).toHaveText('Guide', { timeout: 20_000 });
+  await expect(doc.locator('strong')).toHaveText('bold');
+  await expect(doc.locator('li')).toHaveCount(2);
+  await expect(doc.locator('pre code')).toHaveText('npm test');
+  // a relative image resolves against the document, not the repo root
+  await expect(doc.locator('img')).toHaveAttribute('src', /^data:image\/png;base64,/);
+
+  // and the source slides out from the left, live in the same editor
+  await expect(page.getByTestId('doc-source-show')).toBeVisible();
+  await page.getByTestId('doc-source-show').click();
+  await expect(page.getByTestId('editor-GUIDE.md').locator('.view-lines')).toContainText('# Guide');
+  // the rendered view stays: this is a split, not a mode switch
+  await expect(doc.locator('h1')).toHaveText('Guide');
+  await page.getByTestId('doc-source-hide').click();
+  await expect(page.getByTestId('doc-source-show')).toBeVisible();
+
+  // an image file renders as an image rather than as bytes in an editor.
+  // A folder that did not exist a moment ago arrives collapsed, like any
+  // other, so it has to be opened before its files are on screen.
+  await expect(page.getByTestId('tree-dir-docs')).toBeVisible();
+  await page.getByTestId('tree-dir-docs').click();
+  await expect(page.getByTestId('tree-file-docs/dot.png')).toBeVisible();
+  await page.getByTestId('tree-file-docs/dot.png').dblclick();
+  await expect(page.locator('.doc-image img')).toHaveAttribute('src', /^data:image\/png;base64,/, {
+    timeout: 20_000,
+  });
+});
+
+test('lenses and layout controls switch without breaking the graph', async () => {
+  await page.getByTestId('tab-graph').click();
+  const before = await readStats();
+  await page.getByTestId('lens-hotspot').click();
+  await expect(page.getByTestId('lens-hotspot')).toHaveClass(/active/);
+  await page.getByTestId('lens-tests').click();
+  await page.getByTestId('lens-clusters').click();
+  await page.getByTestId('layout-reset').click();
+  await page.waitForTimeout(400);
+  await expect(page.getByTestId('graph-container')).toBeVisible();
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
+});
+
+test('canvas, wheel and districts views all render the same graph', async () => {
+  await page.getByTestId('tab-graph').click();
+  const before = await readStats();
+  // canvas is the default: file cards live in the DOM, not a canvas element
+  await expect(page.getByTestId('view-canvas')).toHaveClass(/active/);
+  await expect(page.getByTestId('gcard-src/app.ts')).toBeVisible();
+
+  await page.getByTestId('view-wheel').click();
+  await expect(page.getByTestId('view-wheel')).toHaveClass(/active/);
+  await expect(page.locator('.wnode').first()).toBeVisible();
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
+  // clicking a node pins its dependency directions
+  await page.locator('[data-testid="wnode-src/app.ts"] .dot').click();
+  await expect(page.getByTestId('details-panel')).toContainText('src/app.ts');
+
+  await page.getByTestId('view-districts').click();
+  await expect(page.getByTestId('view-districts')).toHaveClass(/active/);
+  await expect(page.getByTestId('dtile-src/app.ts')).toBeVisible();
+
+  await page.getByTestId('view-canvas').click();
+  await expect(page.getByTestId('gcard-src/app.ts')).toBeVisible();
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
+});
+
+test('the view explains itself: lens reading, zoom readout, centre, cheat sheet', async () => {
+  await page.getByTestId('tab-graph').click();
+  // every lens says how to read its colours, with a matching scale
+  await page.getByTestId('lens-risk').click();
+  await expect(page.getByTestId('lens-reading')).toContainText('Risk');
+  await expect(page.getByTestId('lens-reading')).toContainText('blast radius');
+  await expect(page.getByTestId('lens-scale')).toBeVisible();
+  await page.getByTestId('lens-instability').click();
+  await expect(page.getByTestId('lens-reading')).toContainText('foundations');
+  // the fixture has no test files yet, so this lens explains its own silence
+  await page.getByTestId('lens-tests').click();
+  await expect(page.getByTestId('lens-reading')).toContainText('No test imports any file');
+  await page.getByTestId('lens-clusters').click();
+
+  // zoom controls report where they landed
+  const readout = page.getByTestId('zoom-readout');
+  const before = await readout.textContent();
+  await page.getByTestId('zoom-fit').click();
+  await expect.poll(async () => (await readout.textContent()) !== null).toBe(true);
+  expect(before).toMatch(/%$/);
+
+  // centring keeps the zoom it found — only the position moves
+  const zoomBefore = await readout.textContent();
+  await page.getByTestId('tool-center').click();
+  await expect(readout).toHaveText(zoomBefore ?? '');
+
+  // the cheat sheet is per-view and opens from the keyboard too
+  await page.getByTestId('btn-help').click();
+  await expect(page.getByTestId('help-overlay')).toContainText('Canvas view');
+  await expect(page.getByTestId('help-overlay')).toContainText('shift + click');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('help-overlay')).toBeHidden();
+});
+
+test('menu bar drives the app: submenu picks a lens, View switches tabs', async () => {
+  await page.getByTestId('tab-graph').click();
+  await page.getByTestId('menu-graph').click();
+  await expect(page.getByTestId('menu-panel-graph')).toBeVisible();
+  // hovering the bar switches menus, like a real menu bar
+  await page.getByTestId('menu-view').hover();
+  await expect(page.getByTestId('menu-panel-view')).toBeVisible();
+  await expect(page.getByTestId('menu-panel-graph')).toBeHidden();
+
+  // submenu: Graph > Colour by > Hotspots
+  await page.getByTestId('menu-graph').hover();
+  await page.getByTestId('menu-item-lens').hover();
+  await page.getByTestId('menu-item-lens-hotspot').click();
+  await expect(page.getByTestId('lens-hotspot')).toHaveClass(/active/);
+  await expect(page.getByTestId('menu-panel-graph')).toBeHidden();
+  await page.getByTestId('lens-clusters').click();
+
+  // View > Insights switches the tab
+  await page.getByTestId('menu-view').click();
+  await page.getByTestId('menu-item-tab-insights').click();
+  await expect(page.getByTestId('insights-panel')).toBeVisible();
+  await page.getByTestId('tab-graph').click();
+});
+
+test('a lens with nothing to colour says so instead of going blank', async () => {
+  await page.getByTestId('tab-graph').click();
+  // the fixture has no import cycles, so the graph would otherwise be a
+  // uniform grey that reads as a broken lens
+  await page.getByTestId('lens-cycles').click();
+  await expect(page.getByTestId('lens-reading')).toContainText('No import cycles');
+  await expect(page.getByTestId('lens-scale')).toHaveCount(0);
+
+  // …and one that does have something to say keeps its scale
+  await page.getByTestId('lens-risk').click();
+  await expect(page.getByTestId('lens-scale')).toBeVisible();
+  await page.getByTestId('lens-clusters').click();
+});
+
+test('explorer opens a terminal in the folder you right-clicked', async () => {
+  await page.getByTestId('tree-dir-src').click({ button: 'right' });
+  await expect(page.getByTestId('ctx-open-terminal')).toBeVisible();
+  await page.getByTestId('ctx-open-terminal').click();
+  // a second terminal appears, and its shell starts in src/. Terminal ids
+  // carry a per-client prefix, so address the tabs by position.
+  const tabs = page.locator('[data-testid^="terminal-tab-"]');
+  await expect(tabs).toHaveCount(2, { timeout: 10_000 });
+  await expect(page.getByTestId('terminal-panel').locator('.xterm-rows').last()).toContainText('src', {
+    timeout: 25_000,
+  });
+
+  // leave the shared session as we found it: later tests drive terminal 1
+  await tabs.nth(1).locator('.close').click();
+  await expect(tabs).toHaveCount(1);
+  await tabs.first().click();
+});
+
+test('legend click collapses a directory into a meta-node', async () => {
+  const before = await readStats();
+  await page.getByTestId('legend-src').click();
+  // src files fold into one meta node
+  await expect.poll(async () => (await readStats()).nodes).toBeLessThan(before.nodes);
+  await page.getByTestId('legend-src').click();
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
+});
+
+test('a card click selects, a folder double-click unfolds, and a drag moves it', async () => {
+  // A drag takes the board out of hit-testing so the hover highlight is not
+  // recomputed on every card the cursor crosses. That must not start until the
+  // pointer has actually travelled: a click is a mousedown and a mouseup on the
+  // same element, so disabling it any earlier turns every click into a miss.
+  const card = page.getByTestId('gcard-src/app.ts');
+  await card.click();
+  await expect(card).toHaveClass(/\bsel\b/);
+
+  const before = await card.boundingBox();
+  await page.mouse.move(before!.x + before!.width / 2, before!.y + before!.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(before!.x + before!.width / 2 + i * 6, before!.y + before!.height / 2 + i * 3);
+  }
+  await page.mouse.up();
+  await expect
+    .poll(async () => Math.round(((await card.boundingBox())?.x ?? 0) - before!.x))
+    .toBeGreaterThan(40);
+  // dragging is not clicking elsewhere: the selection survives
+  await expect(card).toHaveClass(/\bsel\b/);
+  // and nothing is left in the drag skin once the button is up
+  await expect(page.locator('.gcard.dragging')).toHaveCount(0);
+
+  // folding, then re-opening by double-clicking the folder card itself
+  const unfolded = await readStats();
+  await page.getByTestId('legend-fold-all').click();
+  await expect(page.getByTestId('stats')).toHaveText('2 nodes · 0 edges');
+  await expect(page.getByTestId('legend')).toContainText('2/2 folded');
+  await page.getByTestId('gcard-@dir:src').dblclick();
+  // src alone comes back; tools stays a single card
+  await expect(page.getByTestId('legend')).toContainText('1/2 folded');
+  await expect(page.getByTestId('legend')).toContainText('▾ src');
+  await expect(page.getByTestId('legend')).toContainText('▣ tools');
+  await page.getByTestId('legend-unfold-all').click();
+  await expect.poll(async () => (await readStats()).nodes).toBe(unfolded.nodes);
+  // drop the drag override so later tests see the deterministic layout
+  await page.getByTestId('layout-reset').click();
+});
+
+test('ctrl+drag selects a set, keeps the graph still, and offers what to do with it', async () => {
+  await page.getByTestId('tab-graph').click();
+  // start from no selection: earlier tests leave one
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('bulk-bar')).toBeHidden();
+
+  const positions = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [...document.querySelectorAll('.gcard')].map((el) => {
+          const r = el.getBoundingClientRect();
+          return [el.getAttribute('data-id')!, `${Math.round(r.x)},${Math.round(r.y)}`];
+        }),
+      ),
+    );
+  // a known board: everything unfolded and framed, so the rectangle has
+  // something to catch wherever earlier tests left the view
+  if (await page.getByTestId('legend-unfold-all').isEnabled()) {
+    await page.getByTestId('legend-unfold-all').click();
+  }
+  await page.getByTestId('zoom-fit').click();
+  await page.waitForTimeout(600);
+
+  // the baseline is the settled board, not whatever was on screen before it
+  // was normalised — unfolding and framing move cards, and are meant to
+  const before = await positions();
+
+  const box = (await page.locator('.canvas-view').boundingBox())!;
+  // start well below the toolbar overlay: a mousedown on it is not a box drag,
+  // and that is deliberate
+  const top = box.y + 200;
+  await page.keyboard.down('Control');
+  await page.mouse.move(box.x + 20, top);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) {
+    await page.mouse.move(box.x + 20 + (i * (box.width - 60)) / 12, top + (i * (box.y + box.height - 40 - top)) / 12);
+  }
+  await page.mouse.up();
+  await page.keyboard.up('Control');
+
+  // the set is offered actions where the set is, rather than only behind a
+  // right-click nobody tries after dragging a rectangle
+  await expect(page.getByTestId('bulk-bar')).toBeVisible();
+  await expect(page.getByTestId('bulk-bar')).toContainText('selected');
+  await expect(page.getByTestId('bulk-copy')).toBeVisible();
+  await expect(page.getByTestId('bulk-delete')).toBeVisible();
+
+  /*
+   * Nothing moved. Selecting used to set the primary selection too, which
+   * opened the details panel, narrowed the canvas and re-wrapped the layout —
+   * so every card jumped out from under the rectangle just drawn.
+   */
+  const after = await positions();
+  const moved = Object.keys(before).filter((id) => after[id] && after[id] !== before[id]);
+  expect(moved, 'cards that moved during a box-select').toEqual([]);
+
+  // the selection survives, and copying it yields the structured brief
+  const count = Number(/(\d+) file/.exec((await page.getByTestId('bulk-bar').textContent()) ?? '')?.[1] ?? 0);
+  expect(count).toBeGreaterThan(1);
+  expect(await page.locator('.gcard.msel, .gcard.sel').count()).toBe(count);
+
+  await page.getByTestId('bulk-copy').click();
+  await expect
+    .poll(() => page.evaluate(() => window.flare!.invoke('clipboard:read', []) as Promise<string>), { timeout: 8000 })
+    .toContain('/');
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('bulk-bar')).toBeHidden();
+});
+
+test('symbol drill-down explodes a file and collapses back', async () => {
+  const before = await readStats();
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await page.getByTestId('btn-expand-symbols').click();
+  // util.ts becomes hub + its symbols -> node count grows
+  await expect.poll(async () => (await readStats()).nodes).toBeGreaterThan(before.nodes);
+  await page.getByTestId('btn-collapse-symbols').click();
+  await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
+});
+
+test('command palette jumps to a file', async () => {
+  await page.keyboard.press('Control+k');
+  await expect(page.getByTestId('palette')).toBeVisible();
+  await page.getByTestId('palette-input').fill('helper');
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('palette')).toBeHidden();
+  await expect(page.getByTestId('tab-file:src/lib/helper.ts')).toBeVisible();
+  await page.getByTestId('tab-graph').click();
+});
+
+test('multi-select with structured copy-paths, create and delete via context menu', async () => {
+  // plain-click selects the first file; ctrl+click extends the selection
+  // (wrapped in toPass — modifier clicks can be racy right after heavy churn)
+  await expect(async () => {
+    await page.getByTestId('tree-file-src/app.ts').click();
+    await page.getByTestId('tree-file-src/util.ts').click({ modifiers: ['Control'] });
+    await expect(page.getByTestId('selection-chip')).toContainText('2 selected', { timeout: 2500 });
+  }).toPass({ timeout: 25_000 });
+  await page.getByTestId('tab-graph').click();
+
+  // context menu on a selected row → structured copy of the whole selection
+  await page.getByTestId('tree-file-src/app.ts').click({ button: 'right' });
+  await expect(page.getByTestId('context-menu')).toBeVisible();
+  await expect(page.getByTestId('ctx-copy-paths')).toContainText('Copy 2 paths');
+  await page.getByTestId('ctx-copy-paths').click();
+  await expect
+    .poll(() => page.evaluate(() => window.flare!.invoke('clipboard:read', []) as Promise<string>), { timeout: 8000 })
+    .toBe('src/\n  app.ts\n  util.ts');
+
+  // create a file inside src via the folder's context menu
+  await page.getByTestId('tree-dir-src').click({ button: 'right' });
+  await page.getByTestId('ctx-new-file').click();
+  const input = page.getByTestId('modal-input');
+  await expect(input).toHaveValue('src/');
+  await input.fill('src/fresh.ts');
+  await page.getByTestId('modal-confirm').click();
+  await expect(page.getByTestId('tree-file-src/fresh.ts')).toBeVisible({ timeout: 20_000 });
+
+  // Delete it again. This takes a shadow snapshot first so the delete stays
+  // restorable, and under a loaded machine that has run within a second of the
+  // old 10s budget — long enough to fail the suite for no real reason.
+  await page.getByTestId('tree-file-src/fresh.ts').click({ button: 'right' });
+  await page.getByTestId('ctx-delete').click();
+  await page.getByTestId('modal-confirm').click();
+  await expect(page.getByTestId('tree-file-src/fresh.ts')).toBeHidden({ timeout: 20_000 });
+  await page.getByTestId('btn-approve-all').click();
+});
+
+test('explorer header creates folders, targets the selection, and collapses the tree', async () => {
+  // with a file selected, "new" means "next to that file", and the header says so
+  await page.getByTestId('tree-file-src/app.ts').click();
+  await expect(page.getByTestId('explorer-head')).toContainText('src/');
+
+  await page.getByTestId('explorer-new-folder').click();
+  const input = page.getByTestId('modal-input');
+  await expect(input).toHaveValue('src/');
+  await input.fill('src/widgets');
+  await page.getByTestId('modal-confirm').click();
+  // an empty folder has no files, so only the tree can show it
+  await expect(page.getByTestId('tree-dir-src/widgets')).toBeVisible({ timeout: 10_000 });
+
+  // collapse-all folds the whole tree, including the top level
+  await page.getByTestId('explorer-collapse-all').click();
+  await expect(page.getByTestId('tree-file-src/app.ts')).toBeHidden();
+  await page.getByTestId('tree-dir-src').click();
+  await expect(page.getByTestId('tree-file-src/app.ts')).toBeVisible();
+
+  // clean up: the folder is empty, so this leaves no git noise
+  await page.getByTestId('tree-dir-src/widgets').click({ button: 'right' });
+  await page.getByTestId('ctx-delete').click();
+  await page.getByTestId('modal-confirm').click();
+  await expect(page.getByTestId('tree-dir-src/widgets')).toBeHidden({ timeout: 10_000 });
+});
+
+test('ingests lcov coverage: lens appears live and details show percentages', async () => {
+  await page.getByTestId('tab-graph').click();
+  // no coverage file yet -> no coverage lens
+  await expect(page.getByTestId('lens-coverage')).toHaveCount(0);
+  write(
+    'coverage/lcov.info',
+    'SF:src/util.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:src/app.ts\nLF:4\nLH:4\nend_of_record\n',
+  );
+  // the dedicated lcov watcher picks it up without a restart
+  await expect(page.getByTestId('lens-coverage')).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('lens-coverage').click();
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await expect(page.getByTestId('coverage-row')).toContainText('50% (1/2 lines)');
+  await page.getByTestId('lens-clusters').click();
+});
+
+test('insights: unified metrics table, issue feed, live todo-debt alert', async () => {
+  await page.getByTestId('tab-insights').click();
+  await expect(page.getByTestId('insights-summary')).toBeVisible();
+  await expect(page.getByTestId('insights-summary')).toContainText('files');
+  // metrics table covers the code files
+  expect(await page.getByTestId('metrics-table').locator('tbody tr').count()).toBeGreaterThanOrEqual(5);
+  // deterministic issue: tools/script.py is an orphan (nothing imports it)
+  await expect(page.getByTestId('issue-orphan').filter({ hasText: 'script.py' }).first()).toBeVisible();
+
+  // live rule evaluation: TODO debt appears after an external edit
+  fs.appendFileSync(path.join(fixture, 'src', 'util.ts'), '\n// TODO a\n// FIXME b\n// TODO c\n');
+  await expect(page.getByTestId('issue-todo-debt').first()).toContainText('util.ts', { timeout: 20_000 });
+
+  // Every metric column reads on one 0–100 scale, so a row can be scanned
+  // across; the raw counts are one click away, not gone.
+  const sizeCell = page.getByTestId('metrics-row-src/util.ts').locator('td').nth(5);
+  await expect(sizeCell).toHaveText(/^\d+$/);
+  await page.getByTestId('units-raw').click();
+  await expect(sizeCell).toContainText('lines');
+  await page.getByTestId('units-scaled').click();
+  await expect(sizeCell).toHaveText(/^\d+$/);
+
+  // clicking a metrics row selects the file in the details panel
+  await page.getByTestId('metrics-row-src/util.ts').click();
+  await expect(page.getByTestId('details-panel')).toContainText('src/util.ts');
+
+  // The details panel and the table must quote the same risk. They used to
+  // disagree — a raw unbounded score in one, a 0-100 composite in the other,
+  // both labelled "risk" — and a number you cannot reconcile is worse than no
+  // number. The panel also has to state the scale, not just the value.
+  const tableRisk = (
+    await page.getByTestId('metrics-row-src/util.ts').locator('td').nth(1).textContent()
+  )?.trim();
+  await expect(page.getByTestId('risk-score')).toHaveText(new RegExp(`^${tableRisk}/100 · `));
+
+  await page.getByTestId('btn-approve-all').click();
+  await page.getByTestId('tab-graph').click();
+});
+
+test('review cockpit: burst evidence, smells, tiering and walkthrough', async () => {
+  await page.getByTestId('tab-review').click();
+  await expect(page.getByTestId('review-panel')).toBeVisible();
+
+  // an edit that weakens its own test is exactly what the smell rules are for
+  fs.writeFileSync(
+    path.join(fixture, 'src', 'util.ts'),
+    `export function util() {\n  // @ts-ignore\n  return 1 as any;\n}\n`,
+  );
+  fs.writeFileSync(
+    path.join(fixture, 'src', 'util.test.ts'),
+    `import { util } from './util';\nit.skip('util', () => { expect(util()).toBe(1); });\n`,
+  );
+
+  const burst = page.locator('.burst').first();
+  await expect(burst).toBeVisible({ timeout: 20_000 });
+  // nothing ran after the edit, so the change is explicitly unverified
+  await expect(burst.locator('.verify-pill')).toHaveText('never checked', { timeout: 20_000 });
+  await expect(burst).toContainText('No intent recorded');
+
+  // the shortcuts an agent takes are named, not just counted
+  await expect(page.getByTestId('smell-test-disabled')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('smell-suppression-added')).toBeVisible();
+  await expect(page.getByTestId('smell-test-follows-source')).toBeVisible();
+
+  // risk tiering: every file says why it got the attention it did, and the
+  // load-bearing one sorts above the brand-new test that nothing imports
+  const utilRow = page.getByTestId('brow-src/util.ts');
+  await expect(utilRow).toBeVisible();
+  await expect(utilRow).toContainText(/break if this is wrong|import it/);
+  const order = await burst.locator('.brow .brow-path').allTextContents();
+  expect(order.indexOf('src/util.ts')).toBeLessThan(order.indexOf('src/util.test.ts'));
+
+  // walkthrough steps the graph through the files, worst-risk first
+  await burst.getByRole('button', { name: /Walk through/ }).click();
+  await expect(page.getByTestId('walkbar')).toContainText('1 / ');
+  await page.getByTestId('walk-next').click();
+  await expect(page.getByTestId('walkbar')).toContainText('2 / ');
+  await page.getByTestId('walk-exit').click();
+  await expect(page.getByTestId('walkbar')).toBeHidden();
+
+  // opening a file is what clears "unread" — approving alone is only a claim
+  await expect(page.getByTestId('lens-unread')).toBeVisible();
+  await page.getByTestId('btn-approve-all').click();
+  await page.getByTestId('tab-graph').click();
+});
+
+test('task board: file from a selection, customizable lanes, copy carries graph context', async () => {
+  await page.getByTestId('tab-graph').click();
+  // file the current graph selection as a task without leaving the graph
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await page.getByTestId('tree-file-src/util.ts').click({ button: 'right' });
+  await page.getByTestId('ctx-new-task').click();
+  await expect(page.getByTestId('board-panel')).toBeVisible();
+
+  const card = page.locator('.task-card').first();
+  await expect(card).toContainText('util.ts');
+
+  // the copy payload is the whole point: brief plus what the graph knows
+  await card.locator('.task-title').click();
+  await page.getByTestId('task-title-input').fill('Harden the util helper');
+  await page.getByTestId('task-brief-input').fill('Callers assume it never throws.');
+  await page.getByTestId('task-save').click();
+  const brief = await page.evaluate(async () => {
+    const board = (await window.flare!.invoke('board:get', [])) as { tasks: { id: string }[] } | null;
+    return board ? window.flare!.invoke('board:format', [board.tasks[0].id]) : null;
+  });
+  expect(brief).toContain('# Harden the util helper');
+  expect(brief).toContain('Callers assume it never throws.');
+  expect(brief).toContain('src/util.ts');
+  // util.ts is imported by app.ts, helper.ts and brand-new.ts
+  expect(brief).toMatch(/downstream|importer/);
+
+  // lanes are customizable, and removing one rehomes its tasks rather than
+  // dropping them
+  await page.getByTestId('board-add-lane').click();
+  await page.getByTestId('modal-input').fill('Blocked');
+  await page.getByTestId('modal-confirm').click();
+  await expect(page.getByTestId('lane-blocked')).toBeVisible();
+  await page.getByTestId('lane-remove-blocked').click();
+  await expect(page.getByTestId('lane-blocked')).toBeHidden();
+  await expect(page.locator('.task-card')).toHaveCount(1);
+});
+
+test('MCP exposes the board by lane and an agent can move a task', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
+    return json.result?.content?.[0]?.text ?? '';
+  };
+
+  // an agent files follow-up work it should not do right now
+  const filed = await call('task_create', {
+    title: 'Add a regression test for the resolver',
+    brief: 'Scoped imports are unresolved.',
+    paths: ['src/util.ts'],
+  });
+  expect(filed).toContain('filed');
+
+  // …then pulls its next task by lane
+  const todo = await call('tasks_list', { lane: 'to do' });
+  expect(todo).toContain('Add a regression test for the resolver');
+  expect(todo).toContain('Harden the util helper');
+
+  // a bad lane name explains itself instead of failing silently
+  expect(await call('tasks_list', { lane: 'nowhere' })).toContain('no lane called');
+
+  // task_get returns exactly what a human would have pasted
+  const id = 'add-a-regression-test-for-the-resolver';
+  const brief = await call('task_get', { id });
+  expect(brief).toContain('# Add a regression test for the resolver');
+  expect(brief).toContain('src/util.ts');
+
+  // moving it to review shows up in the UI without a reload
+  expect(await call('task_update', { id, lane: 'to review', note: 'Test added, awaiting eyes.' })).toContain(
+    'moved to To review',
+  );
+  await page.getByTestId('tab-board').click();
+  await expect(page.getByTestId('lane-review').locator('.task-card')).toHaveCount(1, { timeout: 10_000 });
+  await expect(page.getByTestId('lane-review')).toContainText('1 note');
+  await page.getByTestId('tab-graph').click();
+});
+
+test('MCP server answers graph queries over HTTP', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = async (method: string, params?: unknown, id: number | null = 1): Promise<any> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', ...(id === null ? {} : { id }), method, params }),
+    });
+    if (id === null) return res.status;
+    return res.json();
+  };
+
+  const init = await rpc('initialize', {
+    protocolVersion: '2025-06-18',
+    capabilities: {},
+    clientInfo: { name: 'e2e', version: '0' },
+  });
+  expect(init.result.serverInfo.name).toBe('flare');
+  expect(await rpc('notifications/initialized', {}, null)).toBe(202);
+
+  const tools = await rpc('tools/list', {}, 2);
+  const names = tools.result.tools.map((t: { name: string }) => t.name);
+  for (const expected of ['graph_overview', 'file_info', 'dependents', 'find_path', 'issues', 'top_files', 'search', 'impact_of', 'recent_activity']) {
+    expect(names).toContain(expected);
+  }
+
+  const overview = await rpc('tools/call', { name: 'graph_overview', arguments: {} }, 3);
+  expect(overview.result.content[0].text).toContain('clusters:');
+  expect(overview.result.content[0].text).toContain('src');
+
+  const info = await rpc('tools/call', { name: 'file_info', arguments: { path: 'src/util.ts' } }, 4);
+  expect(info.result.content[0].text).toContain('imported by');
+
+  const impact = await rpc('tools/call', { name: 'impact_of', arguments: { paths: ['src/util.ts'] } }, 5);
+  expect(impact.result.content[0].text).toContain('downstream impact');
+
+  const chain = await rpc('tools/call', { name: 'find_path', arguments: { from: 'src/app.ts', to: 'src/util.ts' } }, 6);
+  expect(chain.result.content[0].text).toContain('src/app.ts');
+
+  // graceful failure for unknown tool
+  const bad = await rpc('tools/call', { name: 'nope', arguments: {} }, 7);
+  expect(bad.error.code).toBe(-32602);
+});
+
+test('multiple sessions share one gateway with stable per-project routing', async () => {
+  test.setTimeout(120_000);
+  const url = 'http://127.0.0.1:7411/mcp';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpcAt = async (endpoint: string, name: string, args: unknown = {}, id = 1): Promise<any> => {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    return res.json();
+  };
+
+  // a second Flare instance on a second project, same public port + registry
+  const fixture2 = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-proj2-'));
+  const userData2 = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-data2-'));
+  fs.writeFileSync(path.join(fixture2, 'solo.ts'), 'export const solo = 1;\n');
+  const app2 = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      FLARE_PROJECT: fixture2,
+      FLARE_USERDATA: userData2,
+      FLARE_MCP_PORT: '7411',
+      FLARE_MCP_REGISTRY: mcpRegistryDir,
+    },
+  });
+  try {
+    await (await app2.firstWindow()).waitForSelector('[data-testid="statusbar"]', { timeout: 25_000 });
+
+    // list_projects sees both sessions with their stable URLs
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let listText = '';
+    await expect
+      .poll(async () => {
+        listText = (await rpcAt(url, 'list_projects')).result.content[0].text as string;
+        return listText;
+      }, { timeout: 20_000 })
+      .toContain('proj2');
+    const slugs = [...listText.matchAll(/\/mcp\/([\w-]+)/g)].map((m) => m[1]);
+    expect(slugs.length).toBe(2);
+    const lines = listText.split('\n');
+    const proj2Line = lines.findIndex((l) => l.includes('proj2'));
+    const slug2 = /\/mcp\/([\w-]+)/.exec(lines[proj2Line + 1])![1];
+    const slug1 = slugs.find((s) => s !== slug2)!;
+
+    // bare /mcp is now ambiguous and says so
+    const amb = await rpcAt(url, 'graph_overview');
+    expect(amb.result.content[0].text).toContain('projects are open');
+
+    // each stable slug URL reaches its own project (one of these is proxied)
+    const o1 = await rpcAt(`${url}/${slug1}`, 'graph_overview');
+    expect(o1.result.content[0].text).toContain(path.basename(fixture));
+    const o2 = await rpcAt(`${url}/${slug2}`, 'graph_overview');
+    expect(o2.result.content[0].text).toContain(path.basename(fixture2));
+    expect(o2.result.content[0].text).toContain('files: 1');
+  } finally {
+    await app2.close();
+    fs.rmSync(fixture2, { recursive: true, force: true });
+    fs.rmSync(userData2, { recursive: true, force: true });
+  }
+
+  // with the second instance gone, its registry entry is pruned and the
+  // bare endpoint routes to the surviving session again
+  await expect
+    .poll(async () => (await rpcAt(url, 'graph_overview')).result.content[0].text as string, {
+      timeout: 20_000,
+    })
+    .toContain(path.basename(fixture));
+});
+
+test('detects an agent in the terminal, attributes its changes, logs its commands', async () => {
+  test.setTimeout(120_000);
+  // fake agent: a claude.cmd that stays alive for a while
+  write('claude.cmd', '@echo off\r\nnode -e "setTimeout(function(){}, 25000)"\r\n');
+  const panel = page.getByTestId('terminal-panel');
+  await panel.locator('.terminal-body').click();
+  await page.keyboard.type('.\\claude.cmd');
+  await page.keyboard.press('Enter');
+
+  // agent badge appears on the terminal tab
+  // terminal ids carry a per-client prefix, so match the badge by its role
+  await expect(page.locator('[data-testid^="agent-badge-term-"]').first()).toContainText('claude', {
+    timeout: 25_000,
+  });
+
+  // a change made while the agent is active is attributed to it
+  fs.appendFileSync(path.join(fixture, 'src', 'util.ts'), '\nexport const agentTouched = 1;\n');
+  await page.getByTestId('search-input').fill('util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await expect(page.getByTestId('changed-by')).toContainText('claude', { timeout: 15_000 });
+
+  // the command log recorded the claude.cmd invocation
+  await page.getByTestId('commands-toggle').click();
+  await expect(page.getByTestId('command-log')).toContainText('claude.cmd', { timeout: 15_000 });
+  const rows = page.getByTestId('command-row');
+  expect(await rows.count()).toBeGreaterThanOrEqual(1);
+  await page.getByTestId('commands-toggle').click();
+  await page.getByTestId('btn-approve-all').click();
+});
+
+test('opens to a start screen listing recent projects', async () => {
+  // A separate launch with no FLARE_PROJECT: this is what a normal open
+  // looks like. Launch used to restore the last project silently, which made
+  // this screen — and every way to reach a different project — unreachable.
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-start-data-'));
+  const older = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-start-older-'));
+  const now = Date.now();
+  fs.writeFileSync(
+    path.join(data, 'settings.json'),
+    JSON.stringify({
+      lastProject: fixture,
+      recents: [
+        { path: fixture, openedAt: now - 60_000 },
+        older, // a bare string, the shape older builds wrote
+      ],
+    }),
+  );
+
+  const second = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      FLARE_PROJECT: '',
+      FLARE_USERDATA: data,
+      FLARE_MCP_PORT: '7412',
+      FLARE_MCP_REGISTRY: mcpRegistryDir,
+    },
+  });
+  try {
+    const win = await second.firstWindow();
+    await expect(win.getByTestId('start-screen')).toBeVisible({ timeout: 20_000 });
+    await expect(win.getByTestId('open-folder')).toBeVisible();
+
+    // both stored shapes are listed, newest first
+    const rows = win.locator('.start-row');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first()).toContainText(path.basename(fixture));
+    await expect(rows.first()).toContainText('min ago');
+    await expect(rows.nth(1)).toContainText(path.basename(older));
+
+    // clicking one opens it, and the app leaves the start screen
+    await rows.first().click();
+    await expect(win.getByTestId('graph-container')).toBeVisible({ timeout: 20_000 });
+    await expect(win.getByTestId('project-name')).toHaveText(path.basename(fixture));
+  } finally {
+    await second.close();
+    for (const dir of [data, older]) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // a lingering handle is not a test failure
+      }
+    }
+  }
+});
+
+test('reuse: the metric, the lens and the blockers agree with each other', async () => {
+  // enough logic in it to be worth asking the question, and nothing to stop it
+  // being lifted out: no host, no framework, no project imports
+  write(
+    'src/pure.ts',
+    `export function classify(n: number): string {\n  if (n < 0) return 'neg';\n  if (n === 0) return 'zero';\n  for (let i = 2; i < n; i += 1) {\n    if (n % i === 0) return 'composite';\n  }\n  return n > 1 ? 'prime' : 'one';\n}\n`,
+  );
+  await expect(page.getByTestId('tree-file-src/pure.ts')).toBeVisible({ timeout: 20_000 });
+
+  await page.getByTestId('tab-insights').click();
+  await expect(page.getByTestId('insights-summary')).toContainText('reuse');
+
+  const pure = page.getByTestId('metrics-row-src/pure.ts').locator('td').nth(10);
+  await expect(pure).toHaveText('100', { timeout: 20_000 });
+
+  // src/util.ts is three lines: the question does not apply, which is not the
+  // same as scoring badly, so it reads as "·" rather than as a number
+  const thin = page.getByTestId('metrics-row-src/util.ts').locator('td').nth(10);
+  await expect(thin).toHaveText('·');
+
+  // and the details panel says the same number as the table
+  await page.getByTestId('tab-graph').click();
+  await page.getByTestId('search-input').fill('src/pure.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await expect(page.getByTestId('reuse-score')).toContainText('100/100');
+  await expect(page.getByTestId('reuse-score')).toContainText('self-contained');
+
+  // the lens exists and says how to read itself
+  await page.getByTestId('lens-reuse').click();
+  await expect(page.getByTestId('lens-reading')).toContainText('come out as a package');
+  await page.getByTestId('lens-clusters').click();
+});
+
+test('a file welded to the host scores low and names what welds it', async () => {
+  write('src/io.ts', `import * as fs from 'node:fs';\nimport { util } from './util';\n\nexport function save(p: string) {\n  if (p) fs.writeFileSync(p, String(util()));\n  else if (p === '') throw new Error('no');\n  for (let i = 0; i < 3; i += 1) fs.appendFileSync(p, 'x');\n}\n`);
+  await expect(page.getByTestId('tree-file-src/io.ts')).toBeVisible({ timeout: 20_000 });
+
+  await page.getByTestId('tab-insights').click();
+  const cell = page.getByTestId('metrics-row-src/io.ts').locator('td').nth(10);
+  await expect(cell).toBeVisible({ timeout: 20_000 });
+  const score = Number(await cell.innerText());
+  expect(score).toBeLessThan(60);
+  // and it says which import did it, rather than only that something did
+  await expect(cell.locator('span')).toHaveAttribute('title', /fs/);
+});
+
+test('a task can be edited from the card, and Save is not where Delete was', async () => {
+  await page.getByTestId('tab-board').click();
+  const card = page.locator('.task-card').first();
+  const id = (await card.getAttribute('data-testid'))!.replace('task-', '');
+
+  // editing used to be reachable only by clicking the title, undiscoverably
+  await page.getByTestId(`task-edit-${id}`).click();
+  await expect(page.getByTestId('task-title-input')).toBeVisible();
+
+  // the destructive action is at the far end from the primary one
+  const actions = page.locator('.task-card.editing .task-actions button');
+  await expect(actions.first()).toHaveText('Delete');
+  await expect(actions.last()).toHaveText('Save');
+
+  await page.getByTestId('task-title-input').fill('Edited from the button');
+  await page.getByTestId('task-save').click();
+  await expect(page.locator('.task-card').first()).toContainText('Edited from the button');
+});
+
+test('a selected node offers to start a task on it', async () => {
+  await page.getByTestId('tab-graph').click();
+  await page.getByTestId('search-input').fill('src/util.ts');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-input').fill('');
+  await expect(page.getByTestId('details-panel')).toBeVisible();
+
+  await page.getByTestId('btn-new-task').click();
+  await expect(page.getByTestId('board-panel')).toBeVisible();
+  // the new card is the one carrying the file we selected
+  await expect(page.locator('.task-card').first()).toContainText('util.ts');
+});
+
+test('New Project creates the folder and opens it', async () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-new-'));
+  try {
+    await page.getByTestId('menu-file').click();
+    await expect(page.getByTestId('menu-panel-file')).toBeVisible();
+    await page.getByTestId('menu-item-new-project').click();
+    await expect(page.getByTestId('new-project-dialog')).toBeVisible();
+    // opening an existing folder is the common case and leads; creating an
+    // empty one is the second tab
+    await expect(page.getByTestId('wizard-tab-open')).toHaveAttribute('aria-selected', 'true');
+    await page.getByTestId('wizard-tab-create').click();
+
+    // the picker walks the backend's own filesystem, so it works the same in a
+    // window and in a browser tab
+    await page.getByTestId('picker-path').fill(parent);
+    await page.getByTestId('picker-path').press('Enter');
+    await expect(page.getByTestId('picker-list')).toBeVisible();
+
+    await page.getByTestId('new-project-name').fill('fresh-service');
+    await expect(page.getByTestId('new-project-target')).toContainText('fresh-service');
+    await page.getByTestId('new-project-here').click();
+
+    // the folder is created before anything is written into it, and the app is
+    // now open on it
+    await expect(page.getByTestId('project-name')).toHaveText('fresh-service', { timeout: 30_000 });
+    expect(fs.existsSync(path.join(parent, 'fresh-service'))).toBe(true);
+  } finally {
+    // back to the fixture, which every later test assumes is open
+    await page.evaluate((root) => window.flare!.invoke('project:open', [root]), fixture);
+    await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture), {
+      timeout: 30_000,
+    });
+    fs.rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('New Project refuses a name that is a path, or a folder already in use', async () => {
+  await page.getByTestId('menu-file').click();
+  await expect(page.getByTestId('menu-panel-file')).toBeVisible();
+  await page.getByTestId('menu-item-new-project').click();
+  await expect(page.getByTestId('new-project-dialog')).toBeVisible();
+  await page.getByTestId('wizard-tab-create').click();
+  await page.getByTestId('picker-path').fill(fixture);
+  await page.getByTestId('picker-path').press('Enter');
+
+  await page.getByTestId('new-project-name').fill('nested/deep');
+  await page.getByTestId('new-project-here').click();
+  await expect(page.getByTestId('new-project-error')).toContainText('no slashes');
+
+  // src/ exists in the fixture and has files in it
+  await page.getByTestId('new-project-name').fill('src');
+  await page.getByTestId('new-project-here').click();
+  await expect(page.getByTestId('new-project-error')).toContainText('already exists');
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('new-project-dialog')).toBeHidden();
+});
+
+test('the canvas offers drag-to-select without a modifier, and says which mode it is in', async () => {
+  await page.getByTestId('tab-graph').click();
+  // the mode lives on the canvas, as a tool palette, not in the toolbar
+  const pan = page.getByTestId('tool-pan');
+  const select = page.getByTestId('tool-select');
+  await expect(page.getByTestId('canvas-tools')).toBeVisible();
+  await expect(pan).toHaveAttribute('aria-checked', 'true');
+  // each tool explains itself on hover, including the modifier that gets the other
+  await expect(select).toHaveAttribute('title', /Ctrl/);
+  await expect(pan).toHaveAttribute('title', /Ctrl/);
+
+  await select.click();
+  await expect(select).toHaveAttribute('aria-checked', 'true');
+  await expect(pan).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByTestId('graph-container')).toHaveClass(/picking/);
+
+  // a plain drag now picks files — no key held
+  if (await page.getByTestId('legend-unfold-all').isEnabled()) {
+    await page.getByTestId('legend-unfold-all').click();
+  }
+  await page.getByTestId('zoom-fit').click();
+  await page.waitForTimeout(600);
+  const box = (await page.locator('.canvas-view').boundingBox())!;
+  // below the toolbar overlay, which is deliberately not a drag surface
+  await page.mouse.move(box.x + 20, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 20, box.y + box.height - 20, { steps: 14 });
+  await page.mouse.up();
+  await expect(page.getByTestId('bulk-bar')).toBeVisible();
+  const picked = await page.locator('.gcard.msel, .gcard.sel').count();
+  expect(picked).toBeGreaterThan(1);
+
+  await page.keyboard.press('Escape');
+  // V swaps the tool, as it does in every other canvas
+  await page.getByTestId('stats').click();
+  await page.keyboard.press('v');
+  await expect(pan).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('graph-container')).not.toHaveClass(/picking/);
+});
+
+test('an empty project says so, rather than rendering a blank canvas', async () => {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-empty-'));
+  try {
+    await page.evaluate((root) => window.flare!.invoke('project:open', [root]), empty);
+    await expect(page.getByTestId('project-name')).toHaveText(path.basename(empty), {
+      timeout: 30_000,
+    });
+    // a graph of nothing looks exactly like a broken one, and "New project"
+    // lands here by definition
+    await expect(page.getByTestId('graph-empty')).toBeVisible();
+    await expect(page.getByTestId('graph-empty')).toContainText('No code here yet');
+    await expect(page.getByTestId('graph-empty')).toContainText('being watched');
+  } finally {
+    await page.evaluate((root) => window.flare!.invoke('project:open', [root]), fixture);
+    await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture), {
+      timeout: 30_000,
+    });
+    try {
+      fs.rmSync(empty, { recursive: true, force: true });
+    } catch {
+      // the watcher can still hold it briefly on Windows; not a test failure
+    }
+  }
+});
+
+test('the terminal copies and pastes with plain Ctrl+C / Ctrl+V, and still interrupts', async () => {
+  await page.getByTestId('tab-graph').click();
+  const panel = page.getByTestId('terminal-panel');
+  await expect(panel.locator('.xterm')).toBeVisible();
+  await panel.locator('.terminal-body').click();
+
+  // paste puts the clipboard on the command line, unquoted and unbuttoned
+  await page.evaluate(() => window.flare!.invoke('clipboard:write', ['echo pasted_by_ctrl_v']));
+  await page.keyboard.press('Control+v');
+  await expect(panel.locator('.xterm-rows')).toContainText('pasted_by_ctrl_v', { timeout: 20_000 });
+  await page.keyboard.press('Enter');
+  await expect(panel.locator('.xterm-rows')).toContainText('pasted_by_ctrl_v', { timeout: 20_000 });
+
+  // with a selection, Ctrl+C copies it rather than interrupting
+  await page.evaluate(() => window.flare!.invoke('clipboard:write', ['']));
+  const rows = (await panel.locator('.xterm-screen').boundingBox())!;
+  await page.mouse.move(rows.x + 4, rows.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(rows.x + rows.width - 8, rows.y + rows.height - 8, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.press('Control+c');
+  await expect
+    .poll(() => page.evaluate(() => window.flare!.invoke('clipboard:read', [])), { timeout: 10_000 })
+    .toContain('pasted_by_ctrl_v');
+
+  // and with nothing selected it is still an interrupt: start something that
+  // does not end on its own, then stop it
+  await panel.locator('.terminal-body').click();
+  await page.keyboard.type('node -e "setInterval(()=>{},1000)"');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(2500);
+  await page.keyboard.press('Control+c');
+  // the shell eats keystrokes typed before it has drawn its prompt again
+  await page.waitForTimeout(2500);
+  await page.keyboard.type('echo interrupt_worked');
+  await page.keyboard.press('Enter');
+  await expect(panel.locator('.xterm-rows')).toContainText('interrupt_worked', { timeout: 25_000 });
+});
+
+test('the wizard opens an existing folder, which is the common case', async () => {
+  await page.getByTestId('menu-file').click();
+  await expect(page.getByTestId('menu-panel-file')).toBeVisible();
+  await page.getByTestId('menu-item-new-project').click();
+  await expect(page.getByTestId('new-project-dialog')).toBeVisible();
+  await expect(page.getByTestId('new-project-dialog')).toBeVisible();
+  // no folder name field on this tab: nothing is being created
+  await expect(page.getByTestId('new-project-name')).toHaveCount(0);
+
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-existing-'));
+  fs.mkdirSync(path.join(other, 'src'));
+  fs.writeFileSync(path.join(other, 'src', 'thing.ts'), 'export const thing = 1;\n');
+  try {
+    // the dialog takes the path as it is typed, and the picker's own first
+    // listing — still on its way — must not land on top of it
+    await page.getByTestId('picker-path').fill(other);
+    await expect(page.getByTestId('picker-list')).not.toContainText('reading…');
+    await expect(page.getByTestId('picker-path')).toHaveValue(other);
+    await expect(page.getByTestId('new-project-here')).toBeEnabled();
+    await page.getByTestId('new-project-here').click();
+    await expect(page.getByTestId('project-name')).toHaveText(path.basename(other), {
+      timeout: 30_000,
+    });
+    await expect(page.getByTestId('tree-file-src/thing.ts')).toBeVisible();
+  } finally {
+    await page.evaluate((root) => window.flare!.invoke('project:open', [root]), fixture);
+    await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture), {
+      timeout: 30_000,
+    });
+    try {
+      fs.rmSync(other, { recursive: true, force: true });
+    } catch {
+      // the watcher can still hold it briefly on Windows; not a test failure
+    }
+  }
+});
+
+test('a dropped card lands where it was dropped, without flying back first', async () => {
+  await page.getByTestId('tab-graph').click();
+  await page.keyboard.press('Escape');
+  if (await page.getByTestId('legend-unfold-all').isEnabled()) {
+    await page.getByTestId('legend-unfold-all').click();
+  }
+  await page.getByTestId('zoom-fit').click();
+  await page.waitForTimeout(500);
+
+  const card = page.locator('.gcard').first();
+  const id = (await card.getAttribute('data-id'))!;
+  const before = (await card.boundingBox())!;
+
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 + 180, before.y + before.height / 2 + 90, {
+    steps: 12,
+  });
+
+  /*
+   * Watch every frame after the release.
+   *
+   * A card carries a 110ms transform transition, switched off only while it
+   * is being dragged. Undoing the drag in the wrong order re-enables that
+   * transition while the transform is still applied, so the card jumps past
+   * the drop point by the whole drag distance and then eases back into it.
+   * That overshoot-and-settle is the ricochet, and it is invisible to any
+   * assertion that only looks at where things end up — so this checks that
+   * no frame in between is anywhere other than the landing spot.
+   */
+  await page.evaluate((cardId) => {
+    const w = window as unknown as { __drops: number[] };
+    w.__drops = [];
+    const el = document.querySelector(`.gcard[data-id="${CSS.escape(cardId)}"]`)!;
+    window.addEventListener(
+      'mouseup',
+      () => {
+        const started = performance.now();
+        const sample = (): void => {
+          w.__drops.push(Math.round(el.getBoundingClientRect().x));
+          if (performance.now() - started < 300) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      },
+      { once: true },
+    );
+  }, id);
+
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+
+  const samples = await page.evaluate(() => (window as unknown as { __drops: number[] }).__drops);
+  const after = (await card.boundingBox())!;
+  // the canvas is zoomed, so the screen distance is not the drag distance
+  expect(Math.abs(after.x - before.x)).toBeGreaterThan(50);
+  expect(samples.length).toBeGreaterThan(4);
+  const strays = samples.filter((x) => Math.abs(x - after.x) > 8);
+  expect(strays, `frames away from the landing spot: ${samples.join(',')}`).toEqual([]);
+});
+
+test('the folder bar can be put away, and stays that way', async () => {
+  await page.getByTestId('tab-graph').click();
+  const legend = page.getByTestId('legend');
+  await expect(page.getByTestId('legend-src')).toBeVisible();
+  await expect(legend).toContainText('folded');
+
+  await page.getByTestId('legend-collapse').click();
+  // the chips and their actions go; the summary stays, so it is still clear
+  // what the bar is and how many folders are folded
+  await expect(page.getByTestId('legend-src')).toHaveCount(0);
+  await expect(page.getByTestId('legend-fold-all')).toHaveCount(0);
+  await expect(legend).toContainText('Folders');
+  await expect(legend).toContainText('folded');
+  await expect(page.getByTestId('legend-collapse')).toHaveAttribute('aria-expanded', 'false');
+
+  // and the preference is written, so it survives reopening the project
+  await expect
+    .poll(() => page.evaluate(() => window.flare!.invoke('ui:load', [])), { timeout: 10_000 })
+    .toMatchObject({ legendCollapsed: true });
+
+  await page.getByTestId('legend-collapse').click();
+  await expect(page.getByTestId('legend-src')).toBeVisible();
+  await expect(page.getByTestId('legend-fold-all')).toBeVisible();
+});
+
+test('opening another project offers a second window rather than assuming', async () => {
+  await page.getByTestId('menu-file').click();
+  await expect(page.getByTestId('menu-panel-file')).toBeVisible();
+  await page.getByTestId('menu-item-new-project').click();
+  await expect(page.getByTestId('new-project-dialog')).toBeVisible();
+
+  /*
+   * A window holds one session, so opening a project here ends the one that
+   * is running — agents, terminals and all. That has to be a choice, not the
+   * only option, and the wording has to say which is which.
+   *
+   * The second window is a second process, so clicking it is left to the web
+   * spec, where "elsewhere" is a tab and the whole thing is observable.
+   */
+  const elsewhere = page.getByTestId('new-project-elsewhere');
+  await expect(elsewhere).toBeVisible();
+  await expect(elsewhere).toContainText('new window');
+  await expect(page.getByTestId('new-project-here')).toContainText('here');
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('new-project-dialog')).toHaveCount(0);
+  await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture));
+});

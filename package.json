@@ -1,0 +1,104 @@
+{
+  "name": "flare",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Graph-first IDE for agentic coding",
+  "author": "Flare",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "build:main": "node scripts/build-main.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "start": "electron .",
+    "serve": "npm run build && node dist-server/index.cjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "verify": "npm run build && npm run test && npm run e2e",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:dir": "npm run build && electron-builder --dir --publish never",
+    "icon": "node scripts/make-icon.mjs"
+  },
+  "build": {
+    "appId": "dev.flare.app",
+    "productName": "Flare",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json",
+      "!node_modules/**",
+      "node_modules/@lydell/**",
+      "build/icon.png"
+    ],
+    "asarUnpack": [
+      "node_modules/@lydell/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "darkModeSupport": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png",
+      "desktop": {
+        "entry": {
+          "Categories": "Development;IDE;",
+          "StartupWMClass": "Flare",
+          "Comment": "A desktop IDE for agentic coding"
+        }
+      },
+      "synopsis": "A desktop IDE for agentic coding"
+    },
+    "dmg": {
+      "title": "Flare"
+    }
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "chokidar": "^4.0.3",
+    "ignore": "^7.0.4",
+    "ws": "^8.21.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^3.2.7",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
+    "monaco-editor": "^0.52.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}

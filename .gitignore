@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-electron/
+dist-server/
+test-results/
+playwright-report/
+*.log
+.DS_Store
+release/
+coverage/
+# recording kit for presentation videos — local tooling, never pushed
+/demo/
+# Claude Code artifacts — local agent tooling, never pushed
+.claude/
+.claude.json
+CLAUDE.md
