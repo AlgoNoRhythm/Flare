@@ -2,25 +2,27 @@
 
 # Flare
 
-**A graph-first desktop IDE for agentic coding.**
+**A graph-first IDE for agentic coding — desktop app, or served to a browser
+from the machine the agent runs on.**
 
 The main surface is a live graph of your codebase — every file is a node,
 imports are edges — with a full terminal underneath where you run `claude`,
-`codex` or `opencode`. As the agent edits files, the graph lights up in real
+`codex` or `opencode`. As the agent edits files, the graph updates in real
 time; every change burst is snapshotted into a local shadow history you can
 diff against and revert to, per file or as a whole tree.
 
 <br clear="left" />
 
-![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers light up](docs/flare-graph.png)
+![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
 
-*Flare open on its own source. The Activity lens is on — seven files an agent
-just edited glow, brightest written last — and `shared/types.ts` is hovered, so
-every file that imports it lights up and everything unrelated recedes. That is
-the blast radius of one file, read in a second rather than reconstructed from
-a grep.*
+*Flare open on its own source. The Activity lens highlights the seven files an
+agent just edited, and hovering `shared/types.ts` highlights every file that
+imports it — the blast radius of one file, without reconstructing it from a
+grep.*
 
 ## Run it
+
+Requires Node 20 or newer.
 
 ```sh
 npm install
@@ -85,11 +87,11 @@ real terminal on the remote machine.
 `/api-3f21b8/`. It is assigned once and remembered, so it stays the same across
 restarts and reboots; two projects sharing a folder name get qualified by their
 parent (`/side-api/`) rather than by a hash. Each project runs as its own
-process with its own terminals and its own agents, so you can keep several open
-in several tabs without them touching each other. Whichever process holds the
-port routes to the others; when it exits another takes over and every URL keeps working.
-Agents connect over that same port at `/mcp/<slug>`, so a restricted machine
-only ever has to expose one.
+process with its own terminals and its own agents, so several can stay open in
+several tabs without touching each other. Whichever process holds the port
+routes to the others; when it exits another takes over and every URL keeps
+working. Agents connect over that same port at `/mcp/<slug>`, so a restricted
+machine only ever has to expose one.
 
 **Getting to the port.** Flare listens on `127.0.0.1` by default and tells you
 so — a loopback URL is useless from the laptop you are actually sitting at, so
@@ -141,54 +143,51 @@ used exactly as given.
 State lives in `~/.flare` (`$FLARE_USERDATA` to move it); `--port` or
 `$FLARE_PORT` changes the shared port.
 
-The one thing worth checking early on an unfamiliar machine is that the
-terminal's native module has a prebuild for it — everything else is pure JS:
+The terminal's PTY module is the only native dependency; everything else is
+pure JS, so on an unfamiliar machine that is the one thing worth checking:
 
 ```sh
 node -e "require('@lydell/node-pty')"   # silence means the terminal will work
 ```
 
-This is not a second app. It is the same `dist/` bundle and the same backend as
+This is not a second app: it is the same `dist/` bundle and the same backend as
 the desktop build, reached over a websocket instead of Electron IPC — see
 [Architecture](#architecture).
 
 ## What you get
 
-- **Three views of the same graph**, switchable from the toolbar or the command
-  palette. Every one of them honours the active lens, the selection, collapsed
-  directories and the search filter.
-  - **Canvas** (default) — dependency cards on a pannable board.
-    Ordered left-to-right by dependency depth (SCC-condensed, crossing-reduced,
-    wrapped into bands so a long chain never becomes an unreadable strip):
-    foundations left, entry points right. Cards carry the filename, a
-    lens-coloured rail and badges (complexity, coverage %, untested, TODOs,
-    cycles). Hovering traces imports in blue and importers in amber;
-    shift+click traces the path between two files; cards can be dragged and
-    their positions persist. Zooming out swaps the cards to a plate skin
-    (semantic zoom) so the shape of the repo still reads.
-  - **Wheel** — the sun. Every node sits on one ring ordered by directory,
-    dependencies cross the middle as bundled chords, and cluster bands are
-    labelled around the outside. Drag to spin, alt+wheel to rotate, scroll to
-    zoom, shift+drag to pan, ctrl+drag to box-select. Click a node to *pin* its
-    dependency directions and read the labels at your leisure; hover a cluster
-    band to isolate that directory; click a band to collapse or expand it.
-    See [The sun](#the-sun) below.
-  - **Districts** — a squarified treemap where area is lines of code and shade
-    is the active lens. The fastest read on "how big is this repo and where
-    does the mass sit"; selecting a file outlines everything it touches.
-### The sun
+### Three views of the same graph
 
-![The Wheel view: every file on one ring, dependencies crossing the middle as chords, lit from a warm core](docs/flare-wheel.png)
+Switchable from the toolbar or the command palette. Each honours the active
+lens, the selection, collapsed directories and the search filter.
 
-The Wheel is the one view whose shape is already the mark — a source with
-things radiating from it — so it carries the brand rather than borrowing it.
-The warmth is confined to structure: the ground, the limb, the resting chords
-and the glowing core. Cluster bands and node dots keep their own colours,
-because those are *data*, and data does not change because the brand did.
+- **Canvas** (default) — dependency cards on a pannable board, ordered
+  left-to-right by dependency depth (SCC-condensed, crossing-reduced, wrapped
+  into bands so a long chain never becomes an unreadable strip): foundations
+  left, entry points right. Cards carry the filename, a lens-coloured rail and
+  badges (complexity, coverage %, untested, TODOs, cycles). Hovering traces
+  imports in blue and importers in amber; shift+click traces the path between
+  two files; cards can be dragged and their positions persist. Zooming out
+  swaps the cards to a plate skin (semantic zoom) so the shape of the repo
+  still reads.
+- **Wheel** — every node sits on one ring ordered by directory, dependencies
+  cross the middle as bundled chords, and cluster bands are labelled around the
+  outside. Drag to spin, alt+wheel to rotate, scroll to zoom, shift+drag to
+  pan, ctrl+drag to box-select. Click a node to *pin* its dependency
+  directions; hover a cluster band to isolate that directory; click a band to
+  collapse or expand it.
+- **Districts** — a squarified treemap where area is lines of code and shade
+  is the active lens. The fastest read on "how big is this repo and where
+  does the mass sit"; selecting a file outlines everything it touches.
 
-It is also the fastest read on one question the canvas cannot answer: what
-talks to what across the whole repo at once. A file whose chords fan across the
-entire disc is load-bearing whether or not anyone documented it that way.
+![The Wheel view: every file on one ring, dependencies crossing the middle as chords](docs/flare-wheel.png)
+
+*The Wheel answers the one question the canvas cannot: what talks to what
+across the whole repo at once. A file whose chords fan across the entire disc
+is load-bearing whether or not anyone documented it that way. Node dots take
+the active lens, cluster bands are coloured by directory.*
+
+### Features
 
 - **Folders that open one level at a time** — a folder card holding more files
   than fits on a screen unfolds into its *sub-folders*, not into four hundred
@@ -197,9 +196,9 @@ entire disc is load-bearing whether or not anyone documented it that way.
   drawn, and each of those opens again. Folding it back remembers how far you
   had drilled.
 - **Lenses** — recolour the same layout by Clusters, Activity, Hotspots
-  (churn × complexity), Risk, Tests, Coverage, Instability, Reuse or Cycles. Whichever
-  is active, a strip under the toolbar says in one line how to read the colours
-  and shows the matching scale, so a lens is never just "the graph, but orange".
+  (churn × complexity), Risk, Tests, Coverage, Instability, Reuse, Unread or
+  Cycles. Whichever is active, a strip under the toolbar explains how to read
+  the colours and shows the matching scale.
 - **Everything is discoverable** — a VS Code-style File / View / Graph / Go /
   Help menu bar, a `?` cheat sheet listing every click, drag and shortcut for
   the current view, and a tooltip on every control saying what it does rather
@@ -234,9 +233,8 @@ entire disc is load-bearing whether or not anyone documented it that way.
     explaining why it exists.
   - **which files deserve attention.** Every file is tiered *read carefully /
     read / skim* from blast radius, coverage, cycles and complexity, with the
-    reason spelled out ("9 files break if this is wrong", "no test covers it").
-    Reviewing 30 files with equal attention is how large changes get
-    rubber-stamped.
+    reason spelled out ("9 files break if this is wrong", "no test covers it"),
+    so a 30-file change doesn't get 30 equal glances.
   - **agent smells.** Rules for the shortcuts agent changes take and human ones
     don't: a test edited in the same burst as the code it covers, assertions
     deleted, `.skip`/`.only` added, lint or type suppressions introduced,
@@ -246,10 +244,9 @@ entire disc is load-bearing whether or not anyone documented it that way.
     burst, or jump **back to the last state whose checks passed**.
   - **walkthrough** — step the graph through a burst's files worst-risk first,
     approving as you go.
-- **Comprehension debt, measured** — the *Unread* lens paints every file no
-  human has opened since it last changed. Approving is a claim; opening the
-  file is evidence, and only the evidence counts. Insights shows the repo-level
-  percentage.
+- **Comprehension debt, measured** — the *Unread* lens paints every file that
+  changed this session and no human has opened since; approving does not clear
+  it, opening the file does. Insights shows the repo-level percentage.
 - **Every command classified** — the command log labels each observed command
   read / writes / verify / network / **destructive**, filterable, with the
   pass/fail verdict next to verification runs. Destructive commands
@@ -266,7 +263,7 @@ entire disc is load-bearing whether or not anyone documented it that way.
   the import path between them.
 - **Cross-agent tracking** — the process tree of every terminal is watched for
   claude / codex / opencode / aider / …; changes made while an agent runs are
-  attributed to it (colored node rings, trails on the graph, "changed by" in
+  attributed to it (coloured node rings, trails on the graph, "changed by" in
   details), and every shell command run in the terminals lands in the
   **Commands log** (▤ button in the terminal bar, persisted per project).
 - **Command palette** — Ctrl+K: fuzzy-jump to any file, `>` for commands,
@@ -285,20 +282,20 @@ entire disc is load-bearing whether or not anyone documented it that way.
   along, and sitting in an import cycle. Being widely imported is *not* a
   penalty — a util forty files depend on is the most reusable thing you have,
   which is the opposite of how risk reads the same number. Unlike the other
-  composites this is an absolute scale rather than a ranking within the repo,
-  for the same reason coverage is: if everything imports `fs`, the least-bad
-  file has not become reusable. The `mixed-concerns` rule then points at the
-  files where logic is trapped behind the plumbing and worth separating.
+  composites it is an absolute scale rather than a ranking within the repo: if
+  everything imports `fs`, the least-bad file has not become reusable. The
+  `mixed-concerns` rule points at the files where logic is trapped behind the
+  plumbing and worth separating.
 - **MCP server for your agents** — one shared, localhost-only endpoint for
   the whole machine, however many Flare windows are open. Each instance
   runs a private ephemeral server and registers in a per-pid file registry;
   whichever instance holds the well-known port (default 7345,
-  `FLARE_MCP_PORT`) acts as the gateway and routes
-  `…/mcp/<project>-<hash>` — a **stable per-project URL** — to the owning
-  instance, proxying when needed and taking over the port when the holder
-  exits. Bare `/mcp` works with a single session; with several it points the
-  agent at `list_projects`. Click the ⚡ MCP status-bar item to copy the
-  project-scoped setup command:
+  `FLARE_MCP_PORT`) acts as the gateway and routes `…/mcp/<slug>` — the same
+  stable per-project slug the browser server uses — to the owning instance,
+  proxying when needed and taking over the port when the holder exits. Bare
+  `/mcp` works with a single session; with several it points the agent at
+  `list_projects`. Click the ⚡ MCP status-bar item to copy the project-scoped
+  setup command:
 
   ```sh
   claude mcp add --transport http flare http://127.0.0.1:7345/mcp/<slug>
@@ -310,13 +307,14 @@ entire disc is load-bearing whether or not anyone documented it that way.
   `verification_status` (did my changes actually get checked?),
   `record_intent` (state the goal before editing, so the human reviewing the
   diff isn't reconstructing it) and the board tools — `tasks_list`, `task_get`,
-  `task_update`, `task_create`. The agent can
-  ask the IDE about the codebase instead of re-deriving it.
+  `task_update`, `task_create`. The agent asks the IDE about the codebase
+  instead of re-deriving it.
 - **Workspace restore** — tabs, lens, active view, panel sizes, collapse
   state, node positions and window bounds all persist per project.
 - **Live change tracking** — a debounced watcher re-parses changed files and
-  patches the graph in place. Changed-but-unreviewed nodes glow warning-orange
-  with a heat decay, so you can literally watch an agent move through the codebase.
+  patches the graph in place. Changed-but-unreviewed nodes are marked in
+  warning-orange with a heat decay, so an agent's progress is visible as it
+  works.
 - **Review queue** — every file changed since your last checkpoint is flagged.
   Nothing is gated: an agent writes straight to disk, so reviewing is deciding
   what to keep. Dismiss clears the marker and changes nothing; revert puts the
@@ -329,14 +327,14 @@ entire disc is load-bearing whether or not anyone documented it that way.
 - **Git integration** — branch + per-file status in the tree and graph, diff vs
   HEAD in a Monaco diff editor.
 - **IDE basics** — file tree, Monaco editor (VS Code's editor) with Ctrl+S save
-  and external-change reload, multiple PTY terminals (xterm.js + ConPTY) that run
+  and external-change reload, multiple terminals (xterm.js + node-pty) running
   real shells.
 
 ## Testing
 
 ```sh
-npm test          # 305 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 57 Playwright tests: 40 driving the real Electron app, 17 driving a browser
+npm test          # 314 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 66 Playwright tests: 46 driving the real Electron app, 20 driving a browser
 npm run verify    # build + unit + e2e
 ```
 
@@ -374,3 +372,7 @@ codebase.
 
 Node ↔ renderer flow: chokidar batch → re-parse → graph diff → `evt:graphPatch`
 → graph patch + heat, plus debounced git status refresh and shadow snapshot.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

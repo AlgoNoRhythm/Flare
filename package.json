@@ -4,6 +4,7 @@
   "private": true,
   "description": "Graph-first IDE for agentic coding",
   "author": "Flare",
+  "license": "MIT",
   "main": "dist-electron/main.cjs",
   "scripts": {
     "build:main": "node scripts/build-main.mjs",
