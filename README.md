@@ -15,20 +15,6 @@ diff against and revert to, per file or as a whole tree.
 
 ![Flare in one minute: opening a folder in the graph, the blast radius of a shared file, four lenses, a task drawn round two files with a box-select, and an agent picking that task up over MCP and doing it while the map updates](docs/flare-demo.gif)
 
-*A minute of Flare, unedited and on its own source. Open a folder in the graph;
-hover `shared/types.ts` and everything that breaks if it is wrong lights up;
-recolour the same layout by hotspots, risk, tests and cycles; box-select two
-files into a task — then run `claude` in Flare's terminal and watch it take
-that task off the board over MCP, move its own card, and edit both files while
-the graph updates underneath it.*
-
-![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
-
-*Flare open on its own source. The Activity lens highlights the seven files an
-agent just edited, and hovering `shared/types.ts` highlights every file that
-imports it — the blast radius of one file, without reconstructing it from a
-grep.*
-
 ## Run it
 
 Requires Node 20 or newer.
@@ -76,7 +62,8 @@ npm run serve                          # or `npm run serve -- /path/to/project`
 ```
 
 ```
-Flare — http://127.0.0.1:7345/
+Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
+  the token is asked for once per browser — ~/.flare/web-token
   open it to pick a project — each one gets its own url
 ```
 
@@ -107,10 +94,10 @@ so — a loopback URL is useless from the laptop you are actually sitting at, so
 it prints the machine's real addresses too and says what to do about them:
 
 ```
-Flare — http://127.0.0.1:7345/
+Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
   reachable from this machine only. From your laptop, either
     ssh -L 7345:127.0.0.1:7345 you@workbench
-    or restart with --host 0.0.0.0 for http://10.128.0.7:7345/
+    or restart with --host 0.0.0.0 for http://10.128.0.7:7345/?token=…
 ```
 
 A tunnel or your cloud IDE's port forwarding exposes nothing and works
@@ -118,11 +105,25 @@ anywhere. Flare's asset and websocket URLs are page-relative, so it also runs
 unmodified behind a path prefix — `jupyter-server-proxy`'s `/proxy/7345/`, a
 VS Code tunnel, an nginx `location` block — with no configuration.
 
+**The token.** Behind this port are your files, your history and a live shell,
+so the browser side asks for a token — the one in the URL above. It is
+generated on first run and kept in `~/.flare/web-token`, so the printed URL
+keeps working across restarts; `--token <value>` or `$FLARE_TOKEN` sets your
+own. Opening a URL that carries it stores a cookie, so it is asked for once per
+browser and never appears in an address bar again; a URL without one gets a box
+to paste it into. Scripts can send it as `Authorization: Bearer` or
+`X-Flare-Token`. `--no-token` (or `$FLARE_NO_TOKEN=1`) turns the whole thing
+off, for a tunnel you trust or a proxy that already authenticates.
+
+Agents are outside it: `/mcp/<slug>` stays open, because a token there would
+break every `claude mcp add` line already written into a config file. It is
+loopback-only unless you widen the host.
+
 **`--host 0.0.0.0` (or `$FLARE_HOST`) listens on every interface** and prints
-the URLs that will answer, hostname first. Do this only on a network you
-trust: **Flare has no login**, and behind that port are your files and a live
-shell. The per-instance private ports stay on loopback either way; only the
-shared one moves.
+the URLs that will answer, hostname first. Do this only on a network you trust:
+the token is the only thing in front of a filesystem and a shell, and the MCP
+endpoint moves with it. The per-instance private ports stay on loopback either
+way; only the shared one moves.
 
 **The URL of the machine, whatever shape it takes.** Every hosted environment
 addresses a forwarded port differently, and none of those addresses appear in
@@ -149,8 +150,8 @@ Anything else behind a proxy Flare cannot see takes `--public-url` (or
 appended; a value that already carries a port, a path prefix, or `https` is
 used exactly as given.
 
-State lives in `~/.flare` (`$FLARE_USERDATA` to move it); `--port` or
-`$FLARE_PORT` changes the shared port.
+State lives in `~/.flare` (`$FLARE_USERDATA` to move it), the token included;
+`--port` or `$FLARE_PORT` changes the shared port.
 
 The terminal's PTY module is the only native dependency; everything else is
 pure JS, so on an unfamiliar machine that is the one thing worth checking:
@@ -164,6 +165,13 @@ the desktop build, reached over a websocket instead of Electron IPC — see
 [Architecture](#architecture).
 
 ## What you get
+
+![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
+
+*Flare open on its own source. The Activity lens highlights the seven files an
+agent just edited, and hovering `shared/types.ts` highlights every file that
+imports it — the blast radius of one file, without reconstructing it from a
+grep.*
 
 ### Three views of the same graph
 
@@ -342,8 +350,8 @@ the active lens, cluster bands are coloured by directory.*
 ## Testing
 
 ```sh
-npm test          # 314 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 66 Playwright tests: 46 driving the real Electron app, 20 driving a browser
+npm test          # 332 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 70 Playwright tests: 46 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 
@@ -371,7 +379,8 @@ codebase.
   same calls and events over one websocket, riding on the ports the MCP server
   already owns so one instance needs exactly one port. A supervisor holds the
   port and serves the start screen; each project it is asked for becomes a
-  session process of its own at `/<slug>/`.
+  session process of its own at `/<slug>/`. Everything it serves, websocket
+  included, is behind the token in `server/auth.ts`.
 - `src/api.ts` — the typed client both transports share; the only line that
   differs between desktop and browser is which transport it is handed.
 - `src/` — React renderer: the three graph views (`CanvasView`, `WheelView`,

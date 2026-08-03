@@ -7,6 +7,15 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Core } from '../electron/core';
 import type { HttpMount, MountContext } from '../electron/services/mcp';
 import type { EventChannel } from '../shared/channels';
+import {
+  authorize,
+  cookieFor,
+  isSecureRequest,
+  NO_AUTH,
+  TOKEN_FILE,
+  TOKEN_PARAM,
+  type WebAuth,
+} from './auth';
 
 /**
  * Flare in a browser tab.
@@ -20,6 +29,9 @@ import type { EventChannel } from '../shared/channels';
  * exposes one port: agents talk to `/mcp/<slug>`, browsers open `/<slug>/`.
  * That matters wherever a single forwarded port is all you get, which is the
  * normal case for a remote machine.
+ *
+ * Everything it serves is behind the token in `auth.ts`, including the
+ * websocket. The agent endpoint is not — see the note there.
  */
 
 const MIME: Record<string, string> = {
@@ -55,7 +67,10 @@ export class WebUi implements HttpMount {
   private readonly clients = new Set<WebSocket>();
   private readonly wss = new WebSocketServer({ noServer: true });
 
-  constructor(private readonly distDir: string) {}
+  constructor(
+    private readonly distDir: string,
+    private readonly auth: WebAuth = NO_AUTH,
+  ) {}
 
   attach(core: Core): void {
     this.core = core;
@@ -105,6 +120,21 @@ export class WebUi implements HttpMount {
     const { slug, rest } = this.route(req.url ?? '/', ctx);
 
     if (rest === '/mcp' || rest.startsWith('/mcp/')) return false; // the agent endpoint
+
+    const verdict = authorize(req.url ?? '/', req.headers, this.auth);
+    if (verdict === 'deny') {
+      this.sendLogin(res);
+      return true;
+    }
+    if (verdict === 'grant') {
+      // the token came in the URL: remember it, so the rest of the session —
+      // assets, the websocket, the next tab — carries no secret in its address
+      res.setHeader(
+        'set-cookie',
+        cookieFor(this.auth.token, isSecureRequest(req.headers, 'encrypted' in req.socket)),
+      );
+    }
+
     if (slug !== null && rest === '') {
       // "/<slug>" without the slash resolves the page's relative asset links
       // against the root instead of against the session
@@ -128,6 +158,12 @@ export class WebUi implements HttpMount {
     const { slug, rest } = this.route(req.url ?? '/', ctx);
     if (rest !== '/ws') {
       socket.destroy();
+      return;
+    }
+    if (authorize(req.url ?? '/', req.headers, this.auth) === 'deny') {
+      // answer before hanging up: a bare reset looks like a crashed backend,
+      // and the tab would retry it for ever without saying why
+      socket.end('HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n');
       return;
     }
     const owner = ctx.gateway && slug !== null ? ctx.sessions().find((s) => s.slug === slug) : null;
@@ -194,6 +230,34 @@ export class WebUi implements HttpMount {
     const cache = rest.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-store';
     res.writeHead(200, { 'content-type': type, 'cache-control': cache, 'content-length': body.length });
     res.end(body);
+  }
+
+  /**
+   * No token, or the wrong one.
+   *
+   * A form rather than a bare 401, because the person reading it has the token
+   * a few lines up in a terminal, and a GET form puts it back on the same URL
+   * as `?token=…` — the one route in that already works. No `action`, so it
+   * submits to whatever URL the browser is on: the session slug is kept, and so
+   * is any proxy prefix in front of it.
+   */
+  private sendLogin(res: http.ServerResponse): void {
+    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(
+      `<!doctype html><meta charset="utf-8"><title>Flare</title>
+<style>body{margin:0;padding:12vh 8vw;background:#0d0f13;color:#c9d1dc;
+font:14px/1.7 ui-sans-serif,system-ui,'Segoe UI',sans-serif}
+input{background:#151922;border:1px solid #2a313d;border-radius:4px;color:#c9d1dc;
+padding:6px 8px;font:inherit;width:22em;max-width:60vw}
+button{background:#e0a45c;border:0;border-radius:4px;color:#1b1206;padding:7px 14px;
+font:inherit;cursor:pointer;margin-left:6px}
+code{font-family:ui-monospace,Consolas,monospace;color:#7c8798}</style>
+<p>This Flare needs its token. It is printed by <code>flare serve</code> on
+startup, and stored in <code>~/.flare/${TOKEN_FILE}</code> on that machine.</p>
+<form method="get">
+<input type="password" name="${TOKEN_PARAM}" autofocus placeholder="token"
+ aria-label="token"><button type="submit">Open</button></form>`,
+    );
   }
 
   /**

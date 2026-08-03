@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createCore, type Core, type CoreHost } from '../electron/core';
 import { WebUi } from './web';
+import { resolveWebAuth, withToken, TOKEN_FILE } from './auth';
 import { detectPublicUrl, reachableUrls } from './urls';
 
 /**
@@ -37,6 +38,10 @@ interface Args {
   port: number | undefined;
   host: string | undefined;
   publicUrl: string | undefined;
+  /** a token of your choosing, instead of the remembered one */
+  token: string | undefined;
+  /** true when `--no-token` said to serve the UI to anyone who can reach it */
+  noToken: boolean;
   /** true when a supervisor started us for one project */
   session: boolean;
   help: boolean;
@@ -47,12 +52,17 @@ function parseArgs(argv: string[]): Args {
   let port: number | undefined;
   let host: string | undefined;
   let publicUrl: string | undefined;
+  let token: string | undefined;
+  let noToken = false;
   let session = false;
   let help = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') help = true;
     else if (arg === '--session') session = true;
+    else if (arg === '--no-token') noToken = true;
+    else if (arg === '--token') token = argv[(i += 1)];
+    else if (arg.startsWith('--token=')) token = arg.slice('--token='.length);
     else if (arg === '--port' || arg === '-p') port = Number(argv[(i += 1)]);
     else if (arg.startsWith('--port=')) port = Number(arg.slice('--port='.length));
     else if (arg === '--host') host = argv[(i += 1)];
@@ -61,7 +71,10 @@ function parseArgs(argv: string[]): Args {
     else if (arg.startsWith('--public-url=')) publicUrl = arg.slice('--public-url='.length);
     else rest.push(arg);
   }
-  return { root: rest[0] ? path.resolve(rest[0]) : null, port, host, publicUrl, session, help };
+  return {
+    root: rest[0] ? path.resolve(rest[0]) : null,
+    port, host, publicUrl, token, noToken, session, help,
+  };
 }
 
 const USAGE = `flare serve — Flare in a browser, backend on the machine with the code
@@ -74,8 +87,13 @@ const USAGE = `flare serve — Flare in a browser, backend on the machine with t
             $FLARE_PORT)
   --host    interface to listen on (default 127.0.0.1, or $FLARE_HOST). Use
             0.0.0.0 to reach it from another machine directly, at the address
-            printed on startup. Flare has no login of its own, so only do that
-            on a network you trust — see below.
+            printed on startup — see below.
+  --token   the token the UI asks for. One is generated on first run and kept
+            in <data dir>/${TOKEN_FILE}, so the printed URL keeps working
+            across restarts. $FLARE_TOKEN.
+  --no-token
+            serve the UI to anyone who can reach the port. For a tunnel you
+            trust, or a proxy that already authenticates. $FLARE_NO_TOKEN=1.
   --public-url
             the address YOU reach this machine at. Codespaces, Gitpod and
             JupyterHub are detected automatically; an ordinary machine uses its
@@ -90,12 +108,15 @@ Open the port in a browser and you get Flare's start screen. Picking a project
 starts a session for it and takes you to its own URL, /<project-slug>/, which
 stays the same across restarts. Each project is its own process, so you can
 keep several open in several tabs. Agents connect to the same port at
-/mcp/<slug>.
+/mcp/<slug>, which the token does not cover.
+
+The UI asks for the token once per browser; the URL printed on startup carries
+it, and a cookie carries it from then on.
 
 Reaching it from your laptop, safest first:
   ssh -L 7345:127.0.0.1:7345 you@machine     # nothing exposed, works anywhere
   your cloud IDE's port forwarding, or a reverse proxy in front
-  --host 0.0.0.0                             # direct, and unauthenticated
+  --host 0.0.0.0                             # direct: the token is all there is
 
 State lives in ~/.flare (override with $FLARE_USERDATA).`;
 
@@ -119,7 +140,13 @@ async function main(): Promise<void> {
   const bindHost = args.host ?? process.env.FLARE_HOST ?? '127.0.0.1';
   // told, or worked out from a hosted environment that announces itself
   const publicUrl = args.publicUrl ?? detectPublicUrl(process.env, Number(publicPort ?? process.env.FLARE_MCP_PORT ?? 7345));
-  const web = new WebUi(path.join(__dirname, '..', 'dist'));
+  const auth = resolveWebAuth({
+    disabled: args.noToken,
+    token: args.token,
+    env: process.env,
+    dataDir,
+  });
+  const web = new WebUi(path.join(__dirname, '..', 'dist'), auth);
 
   let core: Core;
 
@@ -140,8 +167,14 @@ async function main(): Promise<void> {
         '--port', String(core.mcp.publicPort),
         '--host', bindHost,
         ...(publicUrl ? ['--public-url', publicUrl] : []),
+        ...(auth.enabled ? [] : ['--no-token']),
       ],
-      { env: process.env, stdio: 'ignore' },
+      {
+        // the token travels in the environment rather than in argv, where
+        // every other process on the machine can read it out of `ps`
+        env: auth.enabled ? { ...process.env, FLARE_TOKEN: auth.token } : process.env,
+        stdio: 'ignore',
+      },
     );
     child.unref();
 
@@ -184,24 +217,32 @@ async function main(): Promise<void> {
     await core.handle('project:open', [args.root]);
     host.openSession = openSession;
     console.log(`Flare session — ${args.root}`);
-    console.log(`  UI    ${primary}${core.mcp.slug}/`);
+    console.log(`  UI    ${withToken(`${primary}${core.mcp.slug}/`, auth)}`);
     console.log(`  MCP   ${primary}mcp/${core.mcp.slug}`);
   } else {
     host.openSession = openSession;
-    console.log(`Flare — ${primary}`);
-    for (const url of where.urls.slice(1)) console.log(`        ${url}`);
+    console.log(`Flare — ${withToken(primary, auth)}`);
+    for (const url of where.urls.slice(1)) console.log(`        ${withToken(url, auth)}`);
     if (!(await core.mcp.gatewayDecided)) {
       console.log('  (another Flare already holds that port; its start screen is the live one)');
     }
+    if (auth.enabled) {
+      // the token is in the url above; say where it lives, because the next
+      // tab, the next day, will be opened from a bookmark and not from here
+      console.log(`  the token is asked for once per browser — ${path.join(dataDir, TOKEN_FILE)}`);
+    } else {
+      console.log('  ! --no-token: anyone who can reach this port gets your files and a shell.');
+    }
     if (where.exposed) {
-      console.log('  ! listening beyond this machine, and Flare has no login: anyone who can');
-      console.log('    reach that address gets your files and a shell. Trusted networks only.');
+      const guard = auth.enabled ? 'with only the token in front of it' : 'with nothing in front of it';
+      console.log(`  ! listening beyond this machine, ${guard}: treat that url as a`);
+      console.log('    login to this machine. Trusted networks only.');
     } else if (!where.declared && where.unreachable.length > 0) {
       // the whole point of serving is that you are not sitting at this machine,
       // so say plainly that the loopback URL will not help from anywhere else
       console.log('  reachable from this machine only. From your laptop, either');
       console.log(`    ssh -L ${core.mcp.publicPort}:127.0.0.1:${core.mcp.publicPort} you@${os.hostname()}`);
-      console.log(`    or restart with --host 0.0.0.0 for ${where.unreachable[0]}`);
+      console.log(`    or restart with --host 0.0.0.0 for ${withToken(where.unreachable[0], auth)}`);
     }
     if (!where.declared) {
       // a proxy in front of this machine has a hostname the machine cannot see
@@ -210,7 +251,7 @@ async function main(): Promise<void> {
     }
     if (args.root !== null) {
       const slug = await openSession(args.root);
-      console.log(`  ${path.basename(args.root)} → ${primary}${slug}/`);
+      console.log(`  ${path.basename(args.root)} → ${withToken(`${primary}${slug}/`, auth)}`);
     } else {
       console.log('  open it to pick a project — each one gets its own url');
     }

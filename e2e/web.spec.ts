@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
@@ -17,6 +17,12 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 const PORT = 7413;
+/** Fixed rather than generated, so every url in this file is predictable. */
+const TOKEN = 'e2e-token-abc';
+const BASE = `http://127.0.0.1:${PORT}`;
+
+/** A url that lets you straight in: what the startup banner prints. */
+const enter = (rest = '/'): string => `${BASE}${rest}?token=${TOKEN}`;
 
 const servers: ChildProcess[] = [];
 const fixtures: string[] = [];
@@ -57,14 +63,15 @@ function makeFixture(name: string): string {
  * Start the supervisor, optionally asking it to open a project straight away.
  * Resolves with the slug it reports for that project, if any.
  */
-function serve(root?: string): Promise<string> {
+function serve(root?: string, opts: { port?: number; args?: string[] } = {}): Promise<string> {
   const proc = spawn(
     process.execPath,
-    [path.join('dist-server', 'index.cjs'), ...(root ? [root] : [])],
+    [path.join('dist-server', 'index.cjs'), ...(root ? [root] : []), ...(opts.args ?? [])],
     {
       env: {
         ...process.env,
-        FLARE_PORT: String(PORT),
+        FLARE_PORT: String(opts.port ?? PORT),
+        FLARE_TOKEN: TOKEN,
         FLARE_USERDATA: dataDir,
         FLARE_MCP_REGISTRY: registryDir,
       },
@@ -77,9 +84,14 @@ function serve(root?: string): Promise<string> {
     const timer = setTimeout(() => reject(new Error(`server did not start: ${out}`)), 60_000);
     proc.stdout?.on('data', (chunk) => {
       out += String(chunk);
+      /*
+       * The last line of the banner, not the first: the url is printed before
+       * the port is actually bound, so matching it would hand back a supervisor
+       * that refuses the next connection.
+       */
       const done = root
         ? /→ http:\/\/[\d.]+:\d+\/([\w-]+)\//.exec(out)
-        : /http:\/\/[\d.]+:\d+\/\s*$/m.exec(out);
+        : /open it to pick a project/.exec(out);
       if (done) {
         clearTimeout(timer);
         resolve(root ? done[1] : '');
@@ -112,7 +124,8 @@ async function open(page: Page, slug: string): Promise<void> {
   page.on('console', (m) => {
     if (m.type() === 'error') console.log('[console.error]', m.text().slice(0, 300));
   });
-  await page.goto(`http://127.0.0.1:${PORT}/${slug}/`);
+  // the token goes in once per browser; everything after this rides the cookie
+  await page.goto(enter(`/${slug}/`));
   await expect(page.getByTestId('project-name')).toBeVisible();
 }
 
@@ -262,7 +275,7 @@ test('a second project is reachable at its own url on the same port', async ({ p
 });
 
 test('the port itself is the start screen — the real one, not a stand-in', async ({ page }) => {
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(enter());
   // Flare's own start screen, the same component the desktop app opens to
   await expect(page.getByTestId('start-screen')).toBeVisible();
   await expect(page.getByTestId('folder-picker')).toBeVisible();
@@ -278,7 +291,7 @@ test('picking a project from the start screen spawns its session and goes there'
   page,
 }) => {
   const fresh = makeFixture('gamma');
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(enter());
   await expect(page.getByTestId('start-screen')).toBeVisible();
 
   // typing the path is enough: the confirm opens whatever is in the box
@@ -297,7 +310,7 @@ test('picking a project from the start screen spawns its session and goes there'
   expect(slug).not.toBe(slugB);
 
   // going back to a project already running reuses it rather than duplicating
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(enter());
   await page.getByTestId('picker-path').fill(fresh);
   await expect(page.getByTestId('picker-open')).toBeEnabled();
   await page.getByTestId('picker-open').click();
@@ -320,7 +333,7 @@ test('a recent project opens at its own url from inside another one', async ({ p
 });
 
 test('a url whose session has gone says so instead of hanging', async ({ page }) => {
-  const response = await page.goto(`http://127.0.0.1:${PORT}/no-such-abc123/`);
+  const response = await page.goto(enter('/no-such-abc123/'));
   expect(response?.status()).toBe(404);
   await expect(page.getByText('No Flare session is running')).toBeVisible();
 });
@@ -371,10 +384,82 @@ test('an agent reaches the same session on the same port', async ({ request }) =
   expect(body.result.content[0].text).toContain('src/app.ts');
 });
 
+test('nothing is served without the token, and the agent endpoint is unaffected', async ({
+  request,
+}) => {
+  // behind this port are the files and a shell, so an unauthenticated GET has
+  // to be a 401 and not a start screen
+  const bare = await request.get(`${BASE}/${slugA}/`);
+  expect(bare.status()).toBe(401);
+  expect(await bare.text()).toContain('needs its token');
+  expect((await request.get(`${BASE}/${slugA}/?token=wrong`)).status()).toBe(401);
+  expect((await request.get(`${BASE}/`)).status()).toBe(401);
+
+  // a script does not have to go through the form
+  const withHeader = await request.get(`${BASE}/${slugA}/`, {
+    headers: { 'x-flare-token': TOKEN },
+  });
+  expect(withHeader.status()).toBe(200);
+
+  // and the agent's endpoint is deliberately outside all of it: putting a
+  // browser cookie in front of it would break every `claude mcp add` already
+  // written into a config file
+  const mcp = await request.post(`${BASE}/mcp/${slugA}`, {
+    data: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'graph_overview' } },
+  });
+  expect(mcp.ok()).toBe(true);
+});
+
+test('the websocket is refused without the token, and says so', async () => {
+  // a socket that is merely reset looks like a backend that crashed, and the
+  // tab would reconnect to it for ever without ever saying why
+  const status = await new Promise<number>((resolve, reject) => {
+    const req = httpRequest({
+      host: '127.0.0.1',
+      port: PORT,
+      path: `/${slugA}/ws`,
+      headers: {
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+        'sec-websocket-key': Buffer.from('0123456789abcdef').toString('base64'),
+        'sec-websocket-version': '13',
+      },
+    });
+    req.on('response', (res) => resolve(res.statusCode ?? 0));
+    req.on('upgrade', () => resolve(101));
+    req.on('error', reject);
+    req.end();
+  });
+  expect(status).toBe(401);
+});
+
+test('the token can be typed in, for a url that arrived without one', async ({ page }) => {
+  await page.goto(`${BASE}/${slugA}/`);
+  await page.getByPlaceholder('token').fill(TOKEN);
+  await page.getByRole('button', { name: 'Open' }).click();
+
+  // through the form, into the app, on the same url it was asked for
+  await expect(page.getByTestId('project-name')).toHaveText(path.basename(rootA));
+  expect(new URL(page.url()).pathname).toBe(`/${slugA}/`);
+
+  // and the cookie it was given carries the next request, with nothing in the
+  // address bar to leak into a bookmark or a screenshot
+  await page.goto(`${BASE}/${slugA}/`);
+  await expect(page.getByTestId('project-name')).toBeVisible();
+});
+
+test('--no-token serves the UI to anyone who can reach the port', async ({ request }) => {
+  const port = PORT + 1;
+  await serve(undefined, { port, args: ['--no-token'] });
+  const response = await request.get(`http://127.0.0.1:${port}/`);
+  expect(response.status()).toBe(200);
+  expect(await response.text()).toContain('<div id="root">');
+});
+
 test('the browser is served the same build the desktop app loads', async ({ request }) => {
   // "same look and feel" is not a promise to keep in step by hand — it is the
   // same bundle, and this fails the moment that stops being true
-  const served = await (await request.get(`http://127.0.0.1:${PORT}/${slugA}/`)).text();
+  const served = await (await request.get(enter(`/${slugA}/`))).text();
   const onDisk = fs.readFileSync(path.join('dist', 'index.html'), 'utf8');
   expect(served).toBe(onDisk);
 });
@@ -484,7 +569,7 @@ test('opening another project in a new tab leaves this one exactly as it was', a
 });
 
 test('the start screen never offers "elsewhere", because nothing is open to lose', async ({ page }) => {
-  await page.goto(`http://127.0.0.1:${PORT}/`);
+  await page.goto(enter());
   await expect(page.getByTestId('start-screen')).toBeVisible();
   await page.getByTestId('new-project').click();
   await expect(page.getByTestId('new-project-dialog')).toBeVisible();
