@@ -13,6 +13,15 @@ diff against and revert to, per file or as a whole tree.
 
 <br clear="left" />
 
+![Flare in one minute: opening a folder in the graph, the blast radius of a shared file, four lenses, a task drawn round two files with a box-select, and an agent picking that task up over MCP and doing it while the map updates](docs/flare-demo.gif)
+
+*A minute of Flare, unedited and on its own source. Open a folder in the graph;
+hover `shared/types.ts` and everything that breaks if it is wrong lights up;
+recolour the same layout by hotspots, risk, tests and cycles; box-select two
+files into a task — then run `claude` in Flare's terminal and watch it take
+that task off the board over MCP, move its own card, and edit both files while
+the graph updates underneath it.*
+
 ![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
 
 *Flare open on its own source. The Activity lens highlights the seven files an
