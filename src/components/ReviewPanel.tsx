@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { num } from '../format';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ago, num } from '../format';
 import type { ChangeBurst, VerificationState } from '../../shared/activity';
 import { VERIFICATION_HINT, VERIFICATION_LABEL } from '../../shared/activity';
 import type { Insights } from '../../shared/insights';
@@ -31,6 +31,9 @@ interface Props {
   onRevertAll(hash: string, label: string): void;
   onWalkthrough(paths: string[]): void;
   onBackToGreen(): void;
+  /** a file a risky-change alert asked to be taken to */
+  focusPath?: string | null;
+  onFocusHandled?(): void;
 }
 
 const VERIFY_TONE: Record<VerificationState, 'good' | 'warn' | 'crit' | 'muted'> = {
@@ -44,14 +47,6 @@ const VERIFY_TONE: Record<VerificationState, 'good' | 'warn' | 'crit' | 'muted'>
 
 const SEV_ICON = { critical: '●', warning: '⚠︎', info: 'ℹ︎' } as const;
 const SEV_COLOR = { critical: UI_STATUS.critical, warning: UI_STATUS.warning, info: '#86b6ef' } as const;
-
-function ago(time: number): string {
-  const s = Math.max(0, Math.round((Date.now() - time) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return new Date(time).toLocaleDateString();
-}
 
 interface Row {
   path: string;
@@ -76,6 +71,8 @@ export function ReviewPanel({
   onRevertAll,
   onWalkthrough,
   onBackToGreen,
+  focusPath = null,
+  onFocusHandled,
 }: Props) {
   const newest = bursts.length > 0 ? bursts[bursts.length - 1].id : null;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(newest ? [newest] : []));
@@ -93,6 +90,40 @@ export function ReviewPanel({
     if (!newest) return;
     setExpanded((prev) => (prev.has(newest) ? prev : new Set([...prev, newest])));
   }, [newest]);
+
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+
+  /*
+   * Land on the file, not merely in the panel.
+   *
+   * An alert about one file that opens a tab listing forty changes has handed
+   * the search back to the person who clicked it. So the burst it belongs to is
+   * opened, any filter hiding it is lifted, and the row is scrolled to and lit
+   * for a few seconds — long enough to find, not long enough to become part of
+   * how the row looks.
+   */
+  useEffect(() => {
+    if (!focusPath) return;
+    const burst = [...bursts].reverse().find((b) => b.changed.includes(focusPath));
+    if (burst) {
+      setExpanded((prev) => (prev.has(burst.id) ? prev : new Set([...prev, burst.id])));
+      if (burst.verification === 'passed' && burst.smells.length === 0) setOnlyProblems(false);
+    }
+    setFocused(focusPath);
+    onFocusHandled?.();
+
+    const frame = requestAnimationFrame(() => {
+      rootRef.current
+        ?.querySelector(`[data-testid="brow-${focusPath}"]`)
+        ?.scrollIntoView({ block: 'center' });
+    });
+    const timer = setTimeout(() => setFocused(null), 4000);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [focusPath, bursts, onFocusHandled]);
 
   const metrics = useMemo(() => {
     const map = new Map<string, Insights['files'][number]>();
@@ -158,7 +189,7 @@ export function ReviewPanel({
   }
 
   return (
-    <div className="review-panel" data-testid="review-panel">
+    <div className="review-panel" data-testid="review-panel" ref={rootRef}>
       <div className="review-note">
         Everything below is <b>already written to disk</b> — an agent does not wait for approval. Reviewing
         means deciding what to keep: <b>dismiss</b> clears the marker and changes nothing, <b>revert</b> puts
@@ -364,7 +395,9 @@ export function ReviewPanel({
                     {rows.map((row) => (
                       <div
                         key={row.path}
-                        className={`brow tier-${row.tier}${row.approved ? ' approved' : ''}`}
+                        className={`brow tier-${row.tier}${row.approved ? ' approved' : ''}${
+                          focused === row.path ? ' focused' : ''
+                        }`}
                         data-testid={`brow-${row.path}`}
                         onClick={() => onSelectFile(row.path)}
                         onDoubleClick={() => !row.removed && onOpenFile(row.path)}

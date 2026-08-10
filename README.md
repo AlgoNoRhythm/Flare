@@ -261,6 +261,16 @@ the active lens, cluster bands are coloured by directory.*
     burst, or jump **back to the last state whose checks passed**.
   - **walkthrough** — step the graph through a burst's files worst-risk first,
     approving as you go.
+- **Risky changes come and find you** — the review tab is a tab, so a load-
+  bearing file rewritten while you were reading the graph goes unnoticed until
+  you go and look. Those changes queue as alerts in the corner instead, one
+  card per file, newest first, staying put until answered: **Review** opens the
+  change on its row in the review panel, **Dismiss** stops that card, **Dismiss
+  all** clears the queue. Dismissing an alert is not approving the change — the
+  file stays flagged, unread and exactly as the agent left it. The bar is the
+  *careful* tier plus something absolute (real dependents, a cycle, real
+  complexity, no test at all), so a repo where nothing is load-bearing stays
+  quiet rather than popping a card for its least boring file.
 - **Comprehension debt, measured** — the *Unread* lens paints every file that
   changed this session and no human has opened since; approving does not clear
   it, opening the file does. Insights shows the repo-level percentage.
@@ -350,8 +360,8 @@ the active lens, cluster bands are coloured by directory.*
 ## Testing
 
 ```sh
-npm test          # 332 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 70 Playwright tests: 46 driving the real Electron app, 24 driving a browser
+npm test          # 344 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 71 Playwright tests: 47 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 

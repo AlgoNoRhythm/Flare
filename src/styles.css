@@ -278,14 +278,33 @@ body,
 }
 
 /* ---------- toasts ---------- */
-.toasts {
+/*
+ * One corner for everything that talks to you, bottom-right, above the status
+ * bar: transient receipts on top, the alert queue underneath it. They used to
+ * be two independent fixed corners, which meant a queue of alerts and a toast
+ * about the file you just saved drew on top of each other.
+ */
+.corner-stack {
   position: fixed;
   right: 16px;
   bottom: 40px;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
   z-index: 120;
+  /* the gaps between the cards are not a target; each child takes its own */
+  pointer-events: none;
+}
+
+.corner-stack > * {
+  pointer-events: auto;
+}
+
+.toasts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .toast {
@@ -317,6 +336,160 @@ body,
     transform: translateX(0);
     opacity: 1;
   }
+}
+
+/* ---------- risky-change alerts ----------
+   A reminder stack, not a toast: it waits for an answer rather than fading
+   after four seconds. It sits at the bottom of the corner stack, so the
+   transient toasts above it move rather than landing on top. */
+.risk-alerts {
+  width: 320px;
+  max-height: calc(100vh - 220px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-3);
+  animation: toast-in 160ms ease-out;
+}
+
+.ra-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-bg);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+}
+
+.ra-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn-soft);
+}
+
+.ra-mark {
+  color: var(--warn);
+}
+
+.ra-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.ra-card {
+  padding: 8px 10px 7px;
+  border-bottom: 1px solid var(--line-faint);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ra-card:last-child {
+  border-bottom: 0;
+}
+
+.ra-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ra-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  /* the tail of a path is the part that identifies it */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ra-when {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.ra-why {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.ra-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ra-agent {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.ra-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-hover);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.ra-btn:hover {
+  background: var(--bg-active);
+  color: var(--ink);
+}
+
+.ra-primary {
+  border-color: var(--accent-line);
+  background: var(--accent-deep);
+  color: var(--accent-pale);
+}
+
+.ra-primary:hover {
+  background: var(--accent-deep-hover);
+  color: #fff;
+}
+
+.ra-quiet {
+  background: transparent;
+}
+
+.ra-more {
+  font: inherit;
+  font-size: 11px;
+  padding: 5px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
+.ra-more:hover {
+  background: var(--bg-hover);
+  color: var(--ink-dim);
+}
+
+/* the review row an alert sent you to, so the click lands somewhere visible */
+.brow.focused {
+  outline: 1px solid var(--accent-line);
+  background: var(--accent-bg);
 }
 
 .agent-badge {

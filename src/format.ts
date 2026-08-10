@@ -25,6 +25,21 @@ export function plural(n: number, singular: string, pluralForm = `${singular}s`)
 }
 
 /**
+ * "12s ago" / "4m ago" / "2h ago", then the date.
+ *
+ * Anything from this session is worth reading as an elapsed time — "did that
+ * happen while I was looking at this file?" is the question being asked — and
+ * anything older is worth reading as a date.
+ */
+export function ago(time: number): string {
+  const s = Math.max(0, Math.round((Date.now() - time) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return new Date(time).toLocaleDateString();
+}
+
+/**
  * Where `value` sits in `values`, 0..1. Used to turn a raw metric into a
  * statement about this repo: 131 means nothing, "higher than 94% of files
  * here" means something.

@@ -52,6 +52,8 @@ import { unverifiedCount } from '../shared/activity';
 import { computeInsights, type Insights } from '../shared/insights';
 import { ContextMenu, Modal, type MenuItem, type ModalRequest } from './components/Menus';
 import { Toasts, toast } from './components/Toasts';
+import { RiskAlerts } from './components/RiskAlerts';
+import { riskAlerts, type RiskAlert } from '../shared/riskAlerts';
 import { LENSES, riskScore, type Lens } from './graph/lenses';
 import { buildLensContext, lensSignal } from './graph/lensColor';
 import {
@@ -167,6 +169,17 @@ export function App() {
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [bursts, setBursts] = useState<ChangeBurst[]>([]);
   const [lastGreen, setLastGreen] = useState<{ hash: string; at: number } | null>(null);
+  /**
+   * Risky-change alerts the person has answered.
+   *
+   * In memory and per session, like the bursts they come from: this says "I
+   * have seen that popup", which is not a fact worth persisting past the
+   * changes it was about. Dismissing is deliberately *not* approving — the
+   * review queue keeps its own, persisted, record of that.
+   */
+  const [dismissedAlerts, setDismissedAlerts] = useState<ReadonlySet<string>>(new Set());
+  /** the review row an alert asked to be taken to */
+  const [reviewFocus, setReviewFocus] = useState<string | null>(null);
   const [walk, setWalk] = useState<{ paths: string[]; index: number } | null>(null);
   const [board, setBoard] = useState<Board>(emptyBoard());
   const [openTerminalAt, setOpenTerminalAt] = useState<{ dir: string; nonce: number } | null>(null);
@@ -247,6 +260,8 @@ export function App() {
     void api.gitChurn().then(setChurn);
     void api.commandsGet().then(setCommands);
     setWalk(null);
+    setDismissedAlerts(new Set());
+    setReviewFocus(null);
     void api.activityGet().then(setBursts);
     void api.boardGet().then((b) => b && setBoard(b));
     void api.activityLastGreen().then(setLastGreen);
@@ -419,6 +434,33 @@ export function App() {
     for (const issue of fresh.slice(0, 2)) toast(`● ${issue.title}`, 'warn');
   }, [insights]);
 
+  /**
+   * The risky changes waiting for an answer.
+   *
+   * Derived rather than accumulated: bursts, metrics and what has been approved
+   * are all already state, so the queue is a view of them. An alert that stops
+   * being true — the file gets approved, or a later burst makes it the same
+   * file's newer alert — leaves on its own, with nothing to keep in sync.
+   */
+  const alerts = useMemo(
+    () =>
+      riskAlerts({
+        bursts,
+        metrics: new Map((insights?.files ?? []).map((f) => [f.path, f])),
+        approvedAt: reviewInfo?.review.approvedAt ?? {},
+        dismissed: dismissedAlerts,
+      }),
+    [bursts, insights, reviewInfo, dismissedAlerts],
+  );
+
+  const dismissAlert = useCallback((alert: RiskAlert) => {
+    setDismissedAlerts((prev) => new Set([...prev, alert.id]));
+  }, []);
+
+  const dismissAllAlerts = useCallback(() => {
+    setDismissedAlerts((prev) => new Set([...prev, ...alerts.map((a) => a.id)]));
+  }, [alerts]);
+
   // ---------- selection model (single + multi) ----------
   const allDirs = useMemo(() => {
     const dirs = new Set<string>();
@@ -449,6 +491,23 @@ export function App() {
     setSelected(id);
     setSelectedPaths(id ? new Set([id]) : new Set());
   }, []);
+
+  /**
+   * Answering an alert: go and read the change.
+   *
+   * The card is dismissed on the way, because the review panel it lands in is
+   * a better version of the same information — leaving the popup up behind the
+   * panel that is showing the file would be asking the same question twice.
+   */
+  const reviewAlert = useCallback(
+    (alert: RiskAlert) => {
+      dismissAlert(alert);
+      selectSingle(alert.path);
+      setActiveTab('review');
+      setReviewFocus(alert.path);
+    },
+    [dismissAlert, selectSingle],
+  );
 
   const toggleSelect = useCallback((id: string) => {
     // pure updater — safe under React's update replay/interleaving
@@ -2064,6 +2123,8 @@ export function App() {
                     onRevertAll={revertAllTo}
                     onWalkthrough={startWalkthrough}
                     onBackToGreen={backToGreen}
+                    focusPath={reviewFocus}
+                    onFocusHandled={() => setReviewFocus(null)}
                   />
                 )}
                 {activeTab === 'insights' && (
@@ -2285,7 +2346,23 @@ export function App() {
         <NewProjectDialog hasProject={project !== null} onClose={() => setNewProjectOpen(false)} />
       )}
       {modal && <Modal request={modal} onClose={() => setModal(null)} />}
-      <Toasts />
+      {/*
+        One corner, two kinds of message: receipts on top, the queue below.
+
+        Stepped left of the details panel while that is open. An alert waits
+        for an answer, so unlike a toast it would otherwise sit on top of the
+        panel's history and dependency links for as long as it took to notice —
+        covering the very thing someone reviewing a risky change came to read.
+      */}
+      <div className="corner-stack" style={{ right: (selection ? detailsWidth : 0) + 16 }}>
+        <Toasts />
+        <RiskAlerts
+          alerts={alerts}
+          onReview={reviewAlert}
+          onDismiss={dismissAlert}
+          onDismissAll={dismissAllAlerts}
+        />
+      </div>
     </div>
   );
 }

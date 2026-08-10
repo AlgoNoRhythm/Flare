@@ -44,7 +44,8 @@ export const TIER_HINT: Record<ReviewTier, string> = {
   skim: 'leaf, small or well covered — a glance is enough',
 };
 
-function uncovered(f: TierInput): boolean {
+/** Nothing meaningful is checking this file. Exported so alerts agree with tiers. */
+export function uncovered(f: TierInput): boolean {
   return f.coveragePct === null ? f.testedBy === 0 : f.coveragePct < 30;
 }
 

@@ -1456,3 +1456,64 @@ test('opening another project offers a second window rather than assuming', asyn
   await expect(page.getByTestId('new-project-dialog')).toHaveCount(0);
   await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture));
 });
+
+test('risky changes queue as alerts that wait to be reviewed or dismissed', async () => {
+  await page.getByTestId('tab-graph').click();
+  // clear whatever earlier tests left queued, so this starts from nothing
+  const stack = page.getByTestId('risk-alerts');
+  if (await stack.isVisible()) await page.getByTestId('ra-dismiss-all').click();
+  await expect(stack).toHaveCount(0);
+
+  // two modules the rest of src/ depends on: the shape of change that is worth
+  // interrupting someone for, and the only one that should raise a card here
+  write('src/core.ts', `export const core = 1;\n`);
+  write('src/base.ts', `export const base = 2;\n`);
+  write(
+    'src/app.ts',
+    `import { core } from './core';\nimport { base } from './base';\nimport { util } from './util';\nimport { helper } from './lib/helper';\n\nexport function main() {\n  return util() + helper() + core + base;\n}\n`,
+  );
+  write(
+    'src/lib/helper.ts',
+    `import { core } from '../core';\nimport { base } from '../base';\nimport { util } from '../util';\n\nexport function helper() {\n  return util() * 2 + core + base;\n}\n`,
+  );
+  write(
+    'src/util.ts',
+    `import { core } from './core';\nimport { base } from './base';\n\nexport function util() {\n  return 1 + core + base;\n}\n`,
+  );
+
+  // the queue names the file and says what makes it risky, in the same words
+  // the review rows use
+  const card = page.getByTestId('ra-card-src/core.ts');
+  await expect(card).toBeVisible({ timeout: 30_000 });
+  await expect(card).toContainText('break if this is wrong');
+  await expect(page.getByTestId('ra-card-src/base.ts')).toBeVisible();
+  // util.ts is in there too — this edit made it depend on both new modules
+  // while the rest of src/ still depends on it
+  await expect(page.getByTestId('ra-card-src/util.ts')).toBeVisible();
+  await expect(stack).toContainText('3 risky changes');
+  // app.ts changed as much as any of them, and nothing imports it
+  await expect(page.getByTestId('ra-card-src/app.ts')).toHaveCount(0);
+
+  // Review lands on the row, not merely on the tab, and answers that card
+  await page.getByTestId('ra-review-src/core.ts').click();
+  await expect(page.getByTestId('review-panel')).toBeVisible();
+  await expect(page.getByTestId('brow-src/core.ts')).toBeVisible();
+  await expect(card).toHaveCount(0);
+  await expect(stack).toContainText('2 risky changes');
+
+  // dismissing is not approving: the card goes, the review queue does not
+  const flagged = await page.getByTestId('unreviewed-badge').textContent();
+  await page.getByTestId('ra-dismiss-src/base.ts').click();
+  await expect(page.getByTestId('ra-card-src/base.ts')).toHaveCount(0);
+  await expect(page.getByTestId('unreviewed-badge')).toHaveText(flagged ?? '');
+
+  /*
+   * One button clears the rest of the queue.
+   *
+   * That the same file queues again when a *later* burst touches it is a unit
+   * test: bursts group writes within 25 seconds of each other, so proving it
+   * here would mean a test that mostly sleeps.
+   */
+  await page.getByTestId('ra-dismiss-all').click();
+  await expect(stack).toHaveCount(0);
+});
