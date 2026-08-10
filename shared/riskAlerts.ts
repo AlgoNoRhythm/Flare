@@ -36,6 +36,8 @@ export interface RiskAlert {
   reasons: string[];
   /** regression-risk composite, 0..100 within this repo */
   risk: number;
+  /** when the burst began — the cut-off for finding the state to diff against */
+  startedAt: number;
 }
 
 export interface RiskAlertInput {
@@ -99,7 +101,16 @@ export function riskAlerts(input: RiskAlertInput): RiskAlert[] {
       const id = alertId(burst.id, path);
       if (dismissed?.has(id)) continue;
 
-      out.push({ id, path, burstId: burst.id, at: burst.endedAt, agent: burst.agent, reasons, risk: m.risk });
+      out.push({
+        id,
+        path,
+        burstId: burst.id,
+        at: burst.endedAt,
+        agent: burst.agent,
+        reasons,
+        risk: m.risk,
+        startedAt: burst.startedAt,
+      });
       if (out.length >= limit) return out;
     }
   }

@@ -13,156 +13,7 @@ diff against and revert to, per file or as a whole tree.
 
 <br clear="left" />
 
-![Flare in one minute: opening a folder in the graph, the blast radius of a shared file, four lenses, a task drawn round two files with a box-select, and an agent picking that task up over MCP and doing it while the map updates](docs/flare-demo.gif)
-
-## Run it
-
-Requires Node 20 or newer.
-
-```sh
-npm install
-npm run build     # bundle main process (esbuild) + renderer (vite)
-npm start         # launch the desktop app
-```
-
-## Install it (Windows / macOS / Linux)
-
-```sh
-npm run dist      # build a platform installer into release/
-```
-
-Produces an NSIS installer on Windows, dmg/zip on macOS, AppImage/deb on Linux
-(run on the target platform — electron-builder doesn't cross-compile native
-deps). `npm run dist:dir` makes an unpacked build for quick testing. The title
-bar is platform-aware: custom controls on Windows/Linux, native inset traffic
-lights on macOS.
-
-Development mode (hot reload for the renderer):
-
-```sh
-npm run dev
-```
-
-Flare opens to a start screen listing your recent projects — arrow keys and
-Enter, or `Ctrl+O` to pick a new folder. The last project you had open is the
-first row, so restoring it is one keystroke rather than an assumption.
-`FLARE_PROJECT=<path>` skips the start screen and opens that project directly.
-
-## Run it in a browser (any remote machine)
-
-Flare's review cockpit works by watching the process tree under its own
-terminals, so the backend has to run on the machine the agent runs on. When
-that is not your laptop — a VM, a dev container, a build box, a cloud
-workstation, anything you reach over SSH or a forwarded port — serve it
-instead of installing it:
-
-```sh
-npm install
-npm run serve                          # or `npm run serve -- /path/to/project`
-```
-
-```
-Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
-  the token is asked for once per browser — ~/.flare/web-token
-  open it to pick a project — each one gets its own url
-```
-
-**The port is the start screen.** Open it and you get Flare's own start
-screen — the same one the desktop app opens to: the projects you have opened
-before, and a folder browser that walks the filesystem on that machine. Pick
-one and it starts a session for it and takes you to its URL:
-
-```
-http://127.0.0.1:7345/api/
-```
-
-From there it is the same IDE: the graph, the editor, the review cockpit, and a
-real terminal on the remote machine.
-
-**One port, many projects.** The url is the folder name — `/api/`, not
-`/api-3f21b8/`. It is assigned once and remembered, so it stays the same across
-restarts and reboots; two projects sharing a folder name get qualified by their
-parent (`/side-api/`) rather than by a hash. Each project runs as its own
-process with its own terminals and its own agents, so several can stay open in
-several tabs without touching each other. Whichever process holds the port
-routes to the others; when it exits another takes over and every URL keeps
-working. Agents connect over that same port at `/mcp/<slug>`, so a restricted
-machine only ever has to expose one.
-
-**Getting to the port.** Flare listens on `127.0.0.1` by default and tells you
-so — a loopback URL is useless from the laptop you are actually sitting at, so
-it prints the machine's real addresses too and says what to do about them:
-
-```
-Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
-  reachable from this machine only. From your laptop, either
-    ssh -L 7345:127.0.0.1:7345 you@workbench
-    or restart with --host 0.0.0.0 for http://10.128.0.7:7345/?token=…
-```
-
-A tunnel or your cloud IDE's port forwarding exposes nothing and works
-anywhere. Flare's asset and websocket URLs are page-relative, so it also runs
-unmodified behind a path prefix — `jupyter-server-proxy`'s `/proxy/7345/`, a
-VS Code tunnel, an nginx `location` block — with no configuration.
-
-**The token.** Behind this port are your files, your history and a live shell,
-so the browser side asks for a token — the one in the URL above. It is
-generated on first run and kept in `~/.flare/web-token`, so the printed URL
-keeps working across restarts; `--token <value>` or `$FLARE_TOKEN` sets your
-own. Opening a URL that carries it stores a cookie, so it is asked for once per
-browser and never appears in an address bar again; a URL without one gets a box
-to paste it into. Scripts can send it as `Authorization: Bearer` or
-`X-Flare-Token`. `--no-token` (or `$FLARE_NO_TOKEN=1`) turns the whole thing
-off, for a tunnel you trust or a proxy that already authenticates.
-
-Agents are outside it: `/mcp/<slug>` stays open, because a token there would
-break every `claude mcp add` line already written into a config file. It is
-loopback-only unless you widen the host.
-
-**`--host 0.0.0.0` (or `$FLARE_HOST`) listens on every interface** and prints
-the URLs that will answer, hostname first. Do this only on a network you trust:
-the token is the only thing in front of a filesystem and a shell, and the MCP
-endpoint moves with it. The per-instance private ports stay on loopback either
-way; only the shared one moves.
-
-**The URL of the machine, whatever shape it takes.** Every hosted environment
-addresses a forwarded port differently, and none of those addresses appear in
-the VM's own interfaces — so Flare derives the shape from the environment
-rather than assuming one:
-
-| where it runs | the URL it prints |
-|---|---|
-| your PC, a bare VM | its hostname and real addresses |
-| GitHub Codespaces | `https://<codespace>-7345.app.github.dev/` |
-| Gitpod | `https://7345-<workspace>.gitpod.io/` |
-| JupyterHub, `jupyter-server-proxy` | `https://<hub>/user/<you>/proxy/7345/` |
-
-Project slugs are appended to whichever it found, so the printed URL is the
-one you can actually paste:
-
-```
-Flare — https://hub.example.com/user/malte/proxy/7345/
-  api → https://hub.example.com/user/malte/proxy/7345/api/
-```
-
-Anything else behind a proxy Flare cannot see takes `--public-url` (or
-`$FLARE_PUBLIC_URL`, which sessions inherit). A bare host gets the port
-appended; a value that already carries a port, a path prefix, or `https` is
-used exactly as given.
-
-State lives in `~/.flare` (`$FLARE_USERDATA` to move it), the token included;
-`--port` or `$FLARE_PORT` changes the shared port.
-
-The terminal's PTY module is the only native dependency; everything else is
-pure JS, so on an unfamiliar machine that is the one thing worth checking:
-
-```sh
-node -e "require('@lydell/node-pty')"   # silence means the terminal will work
-```
-
-This is not a second app: it is the same `dist/` bundle and the same backend as
-the desktop build, reached over a websocket instead of Electron IPC — see
-[Architecture](#architecture).
+![Flare in a minute: opening a folder in the graph, the blast radius of a shared file, four lenses, a task drawn round two files with a box-select, an agent picking that task up over MCP and doing it while the map updates, and the alert Flare raises when it also rewrites a file the rest of the app imports](docs/flare-demo.gif)
 
 ## What you get
 
@@ -360,8 +211,8 @@ the active lens, cluster bands are coloured by directory.*
 ## Testing
 
 ```sh
-npm test          # 344 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 71 Playwright tests: 47 driving the real Electron app, 24 driving a browser
+npm test          # 350 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 73 Playwright tests: 49 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 
@@ -400,6 +251,155 @@ codebase.
 
 Node ↔ renderer flow: chokidar batch → re-parse → graph diff → `evt:graphPatch`
 → graph patch + heat, plus debounced git status refresh and shadow snapshot.
+
+## Run it
+
+Requires Node 20 or newer.
+
+```sh
+npm install
+npm run build     # bundle main process (esbuild) + renderer (vite)
+npm start         # launch the desktop app
+```
+
+## Install it (Windows / macOS / Linux)
+
+```sh
+npm run dist      # build a platform installer into release/
+```
+
+Produces an NSIS installer on Windows, dmg/zip on macOS, AppImage/deb on Linux
+(run on the target platform — electron-builder doesn't cross-compile native
+deps). `npm run dist:dir` makes an unpacked build for quick testing. The title
+bar is platform-aware: custom controls on Windows/Linux, native inset traffic
+lights on macOS.
+
+Development mode (hot reload for the renderer):
+
+```sh
+npm run dev
+```
+
+Flare opens to a start screen listing your recent projects — arrow keys and
+Enter, or `Ctrl+O` to pick a new folder. The last project you had open is the
+first row, so restoring it is one keystroke rather than an assumption.
+`FLARE_PROJECT=<path>` skips the start screen and opens that project directly.
+
+## Run it in a browser (any remote machine)
+
+Flare's review cockpit works by watching the process tree under its own
+terminals, so the backend has to run on the machine the agent runs on. When
+that is not your laptop — a VM, a dev container, a build box, a cloud
+workstation, anything you reach over SSH or a forwarded port — serve it
+instead of installing it:
+
+```sh
+npm install
+npm run serve                          # or `npm run serve -- /path/to/project`
+```
+
+```
+Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
+  the token is asked for once per browser — ~/.flare/web-token
+  open it to pick a project — each one gets its own url
+```
+
+**The port is the start screen.** Open it and you get Flare's own start
+screen — the same one the desktop app opens to: the projects you have opened
+before, and a folder browser that walks the filesystem on that machine. Pick
+one and it starts a session for it and takes you to its URL:
+
+```
+http://127.0.0.1:7345/api/
+```
+
+From there it is the same IDE: the graph, the editor, the review cockpit, and a
+real terminal on the remote machine.
+
+**One port, many projects.** The url is the folder name — `/api/`, not
+`/api-3f21b8/`. It is assigned once and remembered, so it stays the same across
+restarts and reboots; two projects sharing a folder name get qualified by their
+parent (`/side-api/`) rather than by a hash. Each project runs as its own
+process with its own terminals and its own agents, so several can stay open in
+several tabs without touching each other. Whichever process holds the port
+routes to the others; when it exits another takes over and every URL keeps
+working. Agents connect over that same port at `/mcp/<slug>`, so a restricted
+machine only ever has to expose one.
+
+**Getting to the port.** Flare listens on `127.0.0.1` by default and tells you
+so — a loopback URL is useless from the laptop you are actually sitting at, so
+it prints the machine's real addresses too and says what to do about them:
+
+```
+Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
+  reachable from this machine only. From your laptop, either
+    ssh -L 7345:127.0.0.1:7345 you@workbench
+    or restart with --host 0.0.0.0 for http://10.128.0.7:7345/?token=…
+```
+
+A tunnel or your cloud IDE's port forwarding exposes nothing and works
+anywhere. Flare's asset and websocket URLs are page-relative, so it also runs
+unmodified behind a path prefix — `jupyter-server-proxy`'s `/proxy/7345/`, a
+VS Code tunnel, an nginx `location` block — with no configuration.
+
+**The token.** Behind this port are your files, your history and a live shell,
+so the browser side asks for a token — the one in the URL above. It is
+generated on first run and kept in `~/.flare/web-token`, so the printed URL
+keeps working across restarts; `--token <value>` or `$FLARE_TOKEN` sets your
+own. Opening a URL that carries it stores a cookie, so it is asked for once per
+browser and never appears in an address bar again; a URL without one gets a box
+to paste it into. Scripts can send it as `Authorization: Bearer` or
+`X-Flare-Token`. `--no-token` (or `$FLARE_NO_TOKEN=1`) turns the whole thing
+off, for a tunnel you trust or a proxy that already authenticates.
+
+Agents are outside it: `/mcp/<slug>` stays open, because a token there would
+break every `claude mcp add` line already written into a config file. It is
+loopback-only unless you widen the host.
+
+**`--host 0.0.0.0` (or `$FLARE_HOST`) listens on every interface** and prints
+the URLs that will answer, hostname first. Do this only on a network you trust:
+the token is the only thing in front of a filesystem and a shell, and the MCP
+endpoint moves with it. The per-instance private ports stay on loopback either
+way; only the shared one moves.
+
+**The URL of the machine, whatever shape it takes.** Every hosted environment
+addresses a forwarded port differently, and none of those addresses appear in
+the VM's own interfaces — so Flare derives the shape from the environment
+rather than assuming one:
+
+| where it runs | the URL it prints |
+|---|---|
+| your PC, a bare VM | its hostname and real addresses |
+| GitHub Codespaces | `https://<codespace>-7345.app.github.dev/` |
+| Gitpod | `https://7345-<workspace>.gitpod.io/` |
+| JupyterHub, `jupyter-server-proxy` | `https://<hub>/user/<you>/proxy/7345/` |
+
+Project slugs are appended to whichever it found, so the printed URL is the
+one you can actually paste:
+
+```
+Flare — https://hub.example.com/user/malte/proxy/7345/
+  api → https://hub.example.com/user/malte/proxy/7345/api/
+```
+
+Anything else behind a proxy Flare cannot see takes `--public-url` (or
+`$FLARE_PUBLIC_URL`, which sessions inherit). A bare host gets the port
+appended; a value that already carries a port, a path prefix, or `https` is
+used exactly as given.
+
+State lives in `~/.flare` (`$FLARE_USERDATA` to move it), the token included;
+`--port` or `$FLARE_PORT` changes the shared port.
+
+The terminal's PTY module is the only native dependency; everything else is
+pure JS, so on an unfamiliar machine that is the one thing worth checking:
+
+```sh
+node -e "require('@lydell/node-pty')"   # silence means the terminal will work
+```
+
+This is not a second app: it is the same `dist/` bundle and the same backend as
+the desktop build, reached over a websocket instead of Electron IPC — see
+[Architecture](#architecture).
 
 ## License
 

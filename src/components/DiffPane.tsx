@@ -48,6 +48,7 @@ export function DiffPane({ path, source, externalVersion }: Props) {
     const editor = editorRef.current;
     if (!editor) return;
     let cancelled = false;
+    let sub: monaco.IDisposable | null = null;
     const originalPromise =
       source === 'head' ? api.gitShowHead(path) : api.shadowShow(source.hash, path);
     void Promise.all([originalPromise, api.readFile(path)]).then(([original, current]) => {
@@ -59,9 +60,28 @@ export function DiffPane({ path, source, externalVersion }: Props) {
       editor.setModel({ original: originalModel, modified: modifiedModel });
       old?.original.dispose();
       old?.modified.dispose();
+
+      /*
+       * Open on the change, not on line 1.
+       *
+       * A diff of a 300-line file whose one edit is at line 240 opens on three
+       * screens of unchanged code, and the person who came to see what an agent
+       * did has to go looking for it. The diff is computed asynchronously, so
+       * this waits for the first result and then scrolls to it — once, because
+       * after that the scroll position is the reader's.
+       */
+      sub = editor.onDidUpdateDiff(() => {
+        sub?.dispose();
+        sub = null;
+        const first = editor.getLineChanges()?.[0];
+        if (!first) return;
+        const line = first.modifiedStartLineNumber || first.originalStartLineNumber || 1;
+        editor.getModifiedEditor().revealLineInCenter(line, monaco.editor.ScrollType.Immediate);
+      });
     });
     return () => {
       cancelled = true;
+      sub?.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, JSON.stringify(source), externalVersion]);

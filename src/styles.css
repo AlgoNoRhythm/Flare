@@ -343,15 +343,33 @@ body,
    after four seconds. It sits at the bottom of the corner stack, so the
    transient toasts above it move rather than landing on top. */
 .risk-alerts {
-  width: 320px;
+  width: 312px;
   max-height: calc(100vh - 220px);
   display: flex;
   flex-direction: column;
-  background: var(--bg-raised);
+  /* Solid, not a tint over whatever it happens to be covering: this floats
+     over the details panel and the terminal, and a half-transparent card on
+     top of a wall of code is unreadable. The blur is only for the edge. */
+  background: rgba(23, 27, 34, 0.985);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--warn-line);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-3);
-  animation: toast-in 160ms ease-out;
+  border-radius: var(--r-lg);
+  box-shadow:
+    0 24px 54px -18px rgba(0, 0, 0, 0.9),
+    0 4px 14px -6px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+  animation: ra-float-in 260ms cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+@keyframes ra-float-in {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 10px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .ra-head {

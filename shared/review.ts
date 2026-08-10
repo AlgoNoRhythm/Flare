@@ -86,6 +86,30 @@ export function sortForReview<T extends { tier: ReviewTier; risk: number; path: 
   );
 }
 
+/**
+ * What to compare a change against: the newest snapshot taken *before* it.
+ *
+ * A burst's own `snapshotHash` is the snapshot taken a second and a half
+ * *after* its writes — the right thing to jump back to once something is
+ * verified, and exactly the wrong thing to diff against, because it already
+ * contains the change. Diffing a file against it showed a clean, empty diff
+ * for an edit that had plainly happened, and reverting to it did nothing at
+ * all. The state before the burst is the previous snapshot; the session takes
+ * one at startup, so there is normally one even for the first change of a
+ * session. Null means there is none, and git HEAD is the only base left.
+ */
+export function baseSnapshotFor(
+  startedAt: number,
+  snapshots: readonly { hash: string; time: number }[],
+): string | null {
+  let best: { hash: string; time: number } | null = null;
+  for (const snap of snapshots) {
+    if (snap.time > startedAt) continue;
+    if (!best || snap.time > best.time) best = snap;
+  }
+  return best?.hash ?? null;
+}
+
 /** "read 3 carefully, read 4, skim 9" */
 export function tierSummary(tiers: ReviewTier[]): string {
   const counts = { careful: 0, read: 0, skim: 0 };

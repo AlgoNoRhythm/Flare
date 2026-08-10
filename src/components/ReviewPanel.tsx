@@ -3,7 +3,16 @@ import { ago, num } from '../format';
 import type { ChangeBurst, VerificationState } from '../../shared/activity';
 import { VERIFICATION_HINT, VERIFICATION_LABEL } from '../../shared/activity';
 import type { Insights } from '../../shared/insights';
-import { TIER_HINT, TIER_LABEL, reviewTier, sortForReview, tierSummary, type ReviewTier } from '../../shared/review';
+import {
+  TIER_HINT,
+  TIER_LABEL,
+  baseSnapshotFor,
+  reviewTier,
+  sortForReview,
+  tierSummary,
+  type ReviewTier,
+} from '../../shared/review';
+import type { ShadowSnapshot } from '../../shared/types';
 import { shortenCommand } from '../../shared/commands';
 import type { ReviewInfo } from '../api';
 import { UI_STATUS } from '../theme';
@@ -20,12 +29,15 @@ import { agentColor } from '../graph/lenses';
 
 interface Props {
   bursts: ChangeBurst[];
+  /** the shadow history, for working out what a burst changed things *from* */
+  snapshots: readonly ShadowSnapshot[];
   insights: Insights | null;
   reviewInfo: ReviewInfo | null;
   lastGreen: { hash: string; at: number } | null;
   onSelectFile(path: string): void;
   onOpenFile(path: string): void;
-  onOpenDiff(path: string, hash: string): void;
+  /** hash is the state before the change, or null when there is none (diff vs HEAD) */
+  onOpenDiff(path: string, hash: string | null): void;
   onApprove(paths: string[]): void;
   onRevertFile(hash: string, path: string): void;
   onRevertAll(hash: string, label: string): void;
@@ -60,6 +72,7 @@ interface Row {
 
 export function ReviewPanel({
   bursts,
+  snapshots,
   insights,
   reviewInfo,
   lastGreen,
@@ -254,6 +267,8 @@ export function ReviewPanel({
           const rows = rowsFor(burst);
           const open = expanded.has(burst.id);
           const tone = VERIFY_TONE[burst.verification];
+          /* what this burst changed things *from* — see baseSnapshotFor */
+          const base = baseSnapshotFor(burst.startedAt, snapshots);
           const files = rows.length;
           return (
             <div key={burst.id} className={`burst tone-${tone}`} data-testid={`burst-${burst.id}`}>
@@ -355,11 +370,11 @@ export function ReviewPanel({
                     >
                       ✓ Dismiss
                     </button>
-                    {burst.snapshotHash && (
+                    {base && (
                       <button
                         className="btn danger"
                         title="Undo it: restore every file to the snapshot taken just before this burst. A snapshot is taken first, so this is itself undoable."
-                        onClick={() => onRevertAll(burst.snapshotHash!, `${files} file${files === 1 ? '' : 's'} by ${burst.agent}`)}
+                        onClick={() => onRevertAll(base, `${files} file${files === 1 ? '' : 's'} by ${burst.agent}`)}
                       >
                         ↩ Revert {files === 1 ? 'this file' : `these ${num(files)} files`}
                       </button>
@@ -399,7 +414,19 @@ export function ReviewPanel({
                           focused === row.path ? ' focused' : ''
                         }`}
                         data-testid={`brow-${row.path}`}
-                        onClick={() => onSelectFile(row.path)}
+                        /*
+                         * A click on a changed file shows the change.
+                         *
+                         * It used to only move the selection, which put the
+                         * file's metrics in the details panel and left "what
+                         * actually changed here" two more clicks away — on a
+                         * row whose entire reason for existing is that
+                         * something was edited.
+                         */
+                        onClick={() => {
+                          onSelectFile(row.path);
+                          if (!row.removed) onOpenDiff(row.path, base);
+                        }}
                         onDoubleClick={() => !row.removed && onOpenFile(row.path)}
                       >
                         <span className={`tier-badge ${row.tier}`} title={TIER_HINT[row.tier]}>
@@ -416,25 +443,31 @@ export function ReviewPanel({
                         )}
                         <span className="brow-reasons">{row.reasons.join(' · ')}</span>
                         <span className="spacer" />
-                        {burst.snapshotHash && !row.removed && (
+                        {!row.removed && (
                           <button
                             className="row-btn"
-                            title="Diff this file against the snapshot taken just after the burst"
+                            title={
+                              base
+                                ? 'Diff this file against its state before this change'
+                                : 'Diff this file against git HEAD — nothing older was snapshotted'
+                            }
+                            data-testid={`brow-diff-${row.path}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onOpenDiff(row.path, burst.snapshotHash!);
+                              onOpenDiff(row.path, base);
                             }}
                           >
                             diff
                           </button>
                         )}
-                        {burst.snapshotHash && (
+                        {base && (
                           <button
                             className="row-btn danger"
                             title="Undo this file: restore it to its state before the burst, leaving the rest alone"
+                            data-testid={`brow-revert-${row.path}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onRevertFile(burst.snapshotHash!, row.path);
+                              onRevertFile(base, row.path);
                             }}
                           >
                             revert

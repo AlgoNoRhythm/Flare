@@ -54,6 +54,7 @@ import { ContextMenu, Modal, type MenuItem, type ModalRequest } from './componen
 import { Toasts, toast } from './components/Toasts';
 import { RiskAlerts } from './components/RiskAlerts';
 import { riskAlerts, type RiskAlert } from '../shared/riskAlerts';
+import { baseSnapshotFor } from '../shared/review';
 import { LENSES, riskScore, type Lens } from './graph/lenses';
 import { buildLensContext, lensSignal } from './graph/lensColor';
 import {
@@ -137,6 +138,9 @@ export function App() {
   const [churn, setChurn] = useState<Record<string, number>>({});
   const [coverage, setCoverage] = useState<CoverageMap>({});
   const [snapshots, setSnapshots] = useState<ShadowSnapshot[]>([]);
+  // read inside callbacks that must not be rebuilt every time the timeline moves
+  const snapshotsRef = useRef<ShadowSnapshot[]>([]);
+  snapshotsRef.current = snapshots;
   const [insights, setInsights] = useState<Insights | null>(null);
   const [reviewInfo, setReviewInfo] = useState<ReviewInfo | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -492,23 +496,6 @@ export function App() {
     setSelectedPaths(id ? new Set([id]) : new Set());
   }, []);
 
-  /**
-   * Answering an alert: go and read the change.
-   *
-   * The card is dismissed on the way, because the review panel it lands in is
-   * a better version of the same information — leaving the popup up behind the
-   * panel that is showing the file would be asking the same question twice.
-   */
-  const reviewAlert = useCallback(
-    (alert: RiskAlert) => {
-      dismissAlert(alert);
-      selectSingle(alert.path);
-      setActiveTab('review');
-      setReviewFocus(alert.path);
-    },
-    [dismissAlert, selectSingle],
-  );
-
   const toggleSelect = useCallback((id: string) => {
     // pure updater — safe under React's update replay/interleaving
     setSelectedPaths((prev) => {
@@ -755,8 +742,30 @@ export function App() {
     setTabs((prev) =>
       prev.some((t) => t.key === key) ? prev : [...prev, { key, kind: 'diff', path, source }],
     );
+    // already open and already in front: nothing to navigate to
     setActiveTab(key);
   }, []);
+
+  /**
+   * Answering an alert: show what actually changed.
+   *
+   * Straight to the diff against the snapshot taken before the burst — red and
+   * green, scrolled to the first change — because "a risky file was rewritten"
+   * is only half a sentence. The review row is marked as the focus on the way
+   * through, so the panel lands on this file whenever it is opened next.
+   *
+   * The card is dismissed as we go: the question it asked is now on screen.
+   */
+  const reviewAlert = useCallback(
+    (alert: RiskAlert) => {
+      dismissAlert(alert);
+      selectSingle(alert.path);
+      setReviewFocus(alert.path);
+      const base = baseSnapshotFor(alert.startedAt, snapshotsRef.current);
+      openDiff(alert.path, base ? { hash: base } : 'head');
+    },
+    [dismissAlert, selectSingle, openDiff],
+  );
 
   const closeTabNow = useCallback((key: string) => {
     setTabs((prev) => {
@@ -2112,12 +2121,13 @@ export function App() {
                 {activeTab === 'review' && (
                   <ReviewPanel
                     bursts={bursts}
+                    snapshots={snapshots}
                     insights={insights}
                     reviewInfo={reviewInfo}
                     lastGreen={lastGreen}
                     onSelectFile={selectSingle}
                     onOpenFile={openFile}
-                    onOpenDiff={(path, hash) => openDiff(path, { hash })}
+                    onOpenDiff={(path, hash) => openDiff(path, hash ? { hash } : 'head')}
                     onApprove={approvePaths}
                     onRevertFile={revertFileTo}
                     onRevertAll={revertAllTo}
@@ -2146,6 +2156,7 @@ export function App() {
                         path={t.path}
                         kind={previewKindFor(t.path)!}
                         externalVersion={externalVersions[t.path] ?? 0}
+                        changedAt={changedAt}
                         onDirtyChange={onDirtyChange}
                         onOpenFile={openFile}
                       />
@@ -2349,12 +2360,12 @@ export function App() {
       {/*
         One corner, two kinds of message: receipts on top, the queue below.
 
-        Stepped left of the details panel while that is open. An alert waits
-        for an answer, so unlike a toast it would otherwise sit on top of the
-        panel's history and dependency links for as long as it took to notice —
-        covering the very thing someone reviewing a risky change came to read.
+        Pinned to the bottom-right corner, always. It used to step left of the
+        details panel to avoid covering it, which put the queue somewhere
+        different depending on what was selected — a notification that moves
+        around is one you have to look for. It floats over the panel instead.
       */}
-      <div className="corner-stack" style={{ right: (selection ? detailsWidth : 0) + 16 }}>
+      <div className="corner-stack">
         <Toasts />
         <RiskAlerts
           alerts={alerts}

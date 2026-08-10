@@ -10,6 +10,15 @@ interface Props {
   path: string;
   kind: PreviewKind;
   externalVersion: number;
+  /**
+   * When every file in the project last changed.
+   *
+   * A document is not only its own text: a README is mostly the screenshots it
+   * embeds. Those are separate files, so rewriting one bumps *its* version and
+   * not this document's — and the page went on showing an image that no longer
+   * existed on disk. This is what tells the assets below they are stale.
+   */
+  changedAt: Record<string, number>;
   onDirtyChange(path: string, dirty: boolean): void;
   onOpenFile(path: string): void;
 }
@@ -23,7 +32,14 @@ interface Props {
  * the rest of the app uses, so checking what an agent actually wrote into a
  * document is one click rather than a different tab.
  */
-export function DocumentPane({ path, kind, externalVersion, onDirtyChange, onOpenFile }: Props) {
+export function DocumentPane({
+  path,
+  kind,
+  externalVersion,
+  changedAt,
+  onDirtyChange,
+  onOpenFile,
+}: Props) {
   const [source, setSource] = useState<string | null>(null);
   const [dataUrl, setDataUrl] = useState<string | null | undefined>(undefined);
   const [showSource, setShowSource] = useState(false);
@@ -55,9 +71,7 @@ export function DocumentPane({ path, kind, externalVersion, onDirtyChange, onOpe
    * disk rather than on a server, so each one is fetched as a data URL. Doing
    * it here rather than in the renderer keeps the render pure and synchronous.
    */
-  useEffect(() => {
-    if (kind !== 'markdown' || source === null) return;
-    let cancelled = false;
+  const imageRefs = useMemo(() => {
     const refs = new Set<string>();
     const walk = (nodes: unknown[]): void => {
       for (const node of nodes as { type: string; src?: string; children?: unknown[]; items?: { children: unknown[] }[]; rows?: unknown[][][]; head?: unknown[][] }[]) {
@@ -68,8 +82,20 @@ export function DocumentPane({ path, kind, externalVersion, onDirtyChange, onOpe
       }
     };
     walk(blocks);
+    return [...refs].sort();
+  }, [blocks]);
+
+  /** When any embedded image last changed — re-fetch on the strength of this. */
+  const assetStamp = useMemo(
+    () => imageRefs.map((ref) => changedAt[resolveRelative(path, ref)] ?? 0).join(','),
+    [imageRefs, changedAt, path],
+  );
+
+  useEffect(() => {
+    if (kind !== 'markdown') return;
+    let cancelled = false;
     void Promise.all(
-      [...refs].map(async (ref) => {
+      imageRefs.map(async (ref) => {
         if (/^(https?|data):/i.test(ref)) return [ref, ref] as const;
         const url = await api.readFileDataUrl(resolveRelative(path, ref));
         return [ref, url ?? ''] as const;
@@ -81,7 +107,7 @@ export function DocumentPane({ path, kind, externalVersion, onDirtyChange, onOpe
     return () => {
       cancelled = true;
     };
-  }, [blocks, kind, path, source]);
+  }, [imageRefs, assetStamp, kind, path]);
 
   return (
     <div className="doc-pane" ref={hostRef} data-testid={`doc-${path}`}>

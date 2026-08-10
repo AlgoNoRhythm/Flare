@@ -64,6 +64,14 @@ describe('what queues', () => {
     expect(alert.reasons).toEqual(['9 files break if this is wrong', 'no test covers it']);
   });
 
+  it('carries when the burst began, so answering it can find the state before it', () => {
+    const [alert] = riskAlerts({
+      bursts: [burst('b1', ['src/types.ts'], 5_000)],
+      metrics: metrics(risky('src/types.ts')),
+    });
+    expect(alert.startedAt).toBe(4_900);
+  });
+
   it('says nothing about an ordinary edit', () => {
     // a leaf file nothing imports: the review tab lists it, and that is enough
     const leaf = risky('src/leaf.ts', { risk: 10, blastRadius: 0, fanIn: 0 });

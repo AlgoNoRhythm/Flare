@@ -1494,10 +1494,18 @@ test('risky changes queue as alerts that wait to be reviewed or dismissed', asyn
   // app.ts changed as much as any of them, and nothing imports it
   await expect(page.getByTestId('ra-card-src/app.ts')).toHaveCount(0);
 
-  // Review lands on the row, not merely on the tab, and answers that card
+  /*
+   * Review lands on the change itself.
+   *
+   * "A risky file was rewritten" is half a sentence; the other half is the
+   * diff. So answering the card opens it against the state before the burst —
+   * which has to be a *real* diff, with lines marked as added. Diffing against
+   * the burst's own snapshot (taken after the writes) rendered an empty one.
+   */
   await page.getByTestId('ra-review-src/core.ts').click();
-  await expect(page.getByTestId('review-panel')).toBeVisible();
-  await expect(page.getByTestId('brow-src/core.ts')).toBeVisible();
+  const diff = page.getByTestId('diff-src/core.ts');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator('.line-insert').first()).toBeVisible({ timeout: 15_000 });
   await expect(card).toHaveCount(0);
   await expect(stack).toContainText('2 risky changes');
 
@@ -1516,4 +1524,49 @@ test('risky changes queue as alerts that wait to be reviewed or dismissed', asyn
    */
   await page.getByTestId('ra-dismiss-all').click();
   await expect(stack).toHaveCount(0);
+});
+
+test('clicking a changed file in the review shows the red and green of it', async () => {
+  await page.getByTestId('tab-review').click();
+  await expect(page.getByTestId('review-panel')).toBeVisible();
+
+  // rewrite a file that already exists, so the diff has both sides
+  write('src/util.ts', `import { core } from './core';\n\nexport function util() {\n  return 41 + core;\n}\n`);
+  const row = page.getByTestId('brow-src/util.ts');
+  await expect(row.first()).toBeVisible({ timeout: 30_000 });
+
+  // the row itself, not a button hidden on it: the whole reason the row exists
+  // is that something was edited
+  await row.first().click();
+  const diff = page.getByTestId('diff-src/util.ts');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator('.line-insert').first()).toBeVisible({ timeout: 15_000 });
+  await expect(diff.locator('.line-delete').first()).toBeVisible();
+
+  await page.getByTestId('tab-graph').click();
+});
+
+test('a rendered document follows the file, and the images it embeds', async () => {
+  // a README is mostly the pictures in it, and those are separate files: a
+  // change to one used to leave the page showing an image that was gone
+  write('shot.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#111"/></svg>');
+  write('README.md', '# fixture\n\nFIRST_TEXT here.\n\n![shot](shot.svg)\n');
+
+  await page.getByTestId('tree-file-README.md').dblclick();
+  const render = page.getByTestId('doc-render');
+  await expect(render).toContainText('FIRST_TEXT', { timeout: 15_000 });
+  const firstSrc = await render.locator('img').first().getAttribute('src');
+  expect(firstSrc).toMatch(/^data:image\/svg/);
+
+  // the text follows the file on disk…
+  write('README.md', '# fixture\n\nSECOND_TEXT, rewritten on disk.\n\n![shot](shot.svg)\n');
+  await expect(render).toContainText('SECOND_TEXT', { timeout: 15_000 });
+
+  // …and so does an image the document merely points at
+  write('shot.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#eee"/></svg>');
+  await expect
+    .poll(() => render.locator('img').first().getAttribute('src'), { timeout: 15_000 })
+    .not.toBe(firstSrc);
+
+  await page.getByTestId('tab-graph').click();
 });
