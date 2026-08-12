@@ -40,9 +40,78 @@ export interface Task {
   notes: TaskNote[];
 }
 
+export type DecisionStatus = 'proposed' | 'agreed' | 'declined';
+
+/**
+ * A design decision, and whether anyone has agreed to it.
+ *
+ * An agent makes dozens of these an hour — a shape, a name, a place to put
+ * something — and they arrive invisibly, inside a diff, long after the point
+ * where disagreeing would have been cheap. Recording them separately makes the
+ * choice reviewable *before* the code that assumes it exists.
+ */
+export interface Decision {
+  id: string;
+  title: string;
+  /** the reasoning, and what it commits the codebase to */
+  detail: string;
+  /** alternatives considered and dropped, if any were */
+  alternatives: string;
+  status: DecisionStatus;
+  /** 'you' or an agent name */
+  by: string;
+  at: number;
+  paths: string[];
+  /** what the human said when agreeing or declining */
+  verdict: string;
+  decidedAt: number | null;
+}
+
+/**
+ * Something the agent needs answered — parked, not blocking.
+ *
+ * A question asked in a chat window stops everything until someone reads it.
+ * Asked here it names the work it blocks, so the agent can leave that aside
+ * and pick up something else, and the human answers when they get to it.
+ */
+export interface Question {
+  id: string;
+  text: string;
+  /** why it matters, what the agent will do with either answer */
+  detail: string;
+  by: string;
+  at: number;
+  answer: string;
+  answeredAt: number | null;
+  /** task ids this holds up — everything else stays workable */
+  blocks: string[];
+}
+
+/**
+ * The working agreement: what the assistant does when it runs out of work.
+ *
+ * Set by the wizard in the Control panel and read back over MCP, so the rules
+ * live with the project rather than in whichever chat window happened to be
+ * open when they were agreed.
+ */
+export interface Routine {
+  /** look at the board again instead of stopping when the queue empties */
+  recheckBoard: boolean;
+  /** record design decisions and wait for agreement before building on them */
+  flagDecisions: boolean;
+  /** park questions and carry on with work they do not block */
+  parkQuestions: boolean;
+  /** house rules typed into the wizard, verbatim */
+  notes: string;
+  setAt: number;
+}
+
 export interface Board {
   lanes: Lane[];
   tasks: Task[];
+  decisions: Decision[];
+  questions: Question[];
+  routine: Routine | null;
 }
 
 export const DEFAULT_LANES: Lane[] = [
@@ -53,7 +122,32 @@ export const DEFAULT_LANES: Lane[] = [
 ];
 
 export function emptyBoard(): Board {
-  return { lanes: structuredClone(DEFAULT_LANES), tasks: [] };
+  return {
+    lanes: structuredClone(DEFAULT_LANES),
+    tasks: [],
+    decisions: [],
+    questions: [],
+    routine: null,
+  };
+}
+
+/**
+ * A board read back from disk, with everything a newer field expects.
+ *
+ * State files written before decisions, questions or the routine existed are
+ * still perfectly good boards — they just stop one `.map()` short of working,
+ * so filling the gaps is the loader's job rather than every reader's.
+ */
+export function normalizeBoard(raw: unknown): Board {
+  const board = (raw ?? {}) as Partial<Board>;
+  if (!Array.isArray(board.lanes) || board.lanes.length === 0) return emptyBoard();
+  return {
+    lanes: board.lanes,
+    tasks: Array.isArray(board.tasks) ? board.tasks : [],
+    decisions: Array.isArray(board.decisions) ? board.decisions : [],
+    questions: Array.isArray(board.questions) ? board.questions : [],
+    routine: board.routine ?? null,
+  };
 }
 
 /** Stable, readable id from a title, unique within `taken`. */
@@ -204,6 +298,221 @@ export function moveLane(board: Board, id: string, toIndex: number): Board {
   const [lane] = lanes.splice(from, 1);
   lanes.splice(Math.max(0, Math.min(lanes.length, toIndex)), 0, lane);
   return { ...board, lanes };
+}
+
+// ------------------------------------------------------- design decisions
+
+export interface NewDecision {
+  title: string;
+  detail?: string;
+  alternatives?: string;
+  paths?: string[];
+  by?: string;
+  /** a human writing one down has already agreed with themselves */
+  status?: DecisionStatus;
+}
+
+export function recordDecision(
+  board: Board,
+  input: NewDecision,
+  now = Date.now(),
+): { board: Board; decision: Decision } {
+  const taken = new Set(board.decisions.map((d) => d.id));
+  const decision: Decision = {
+    id: slugify(input.title || 'decision', taken),
+    title: input.title.trim() || 'Untitled decision',
+    detail: (input.detail ?? '').trim(),
+    alternatives: (input.alternatives ?? '').trim(),
+    status: input.status ?? 'proposed',
+    by: input.by ?? 'agent',
+    at: now,
+    paths: [...new Set(input.paths ?? [])],
+    verdict: '',
+    decidedAt: input.status && input.status !== 'proposed' ? now : null,
+  };
+  return { board: { ...board, decisions: [...board.decisions, decision] }, decision };
+}
+
+/** Agree or decline — the one thing an agent must not do to its own proposal. */
+export function decideDecision(
+  board: Board,
+  id: string,
+  status: Exclude<DecisionStatus, 'proposed'>,
+  verdict = '',
+  now = Date.now(),
+): Board {
+  return {
+    ...board,
+    decisions: board.decisions.map((d) =>
+      d.id === id ? { ...d, status, verdict: verdict.trim(), decidedAt: now } : d,
+    ),
+  };
+}
+
+export function deleteDecision(board: Board, id: string): Board {
+  return { ...board, decisions: board.decisions.filter((d) => d.id !== id) };
+}
+
+/** Waiting on a human — the thing an agent must not build on yet. */
+export function proposedDecisions(board: Board): Decision[] {
+  return board.decisions.filter((d) => d.status === 'proposed');
+}
+
+// -------------------------------------------------------------- questions
+
+export interface NewQuestion {
+  text: string;
+  detail?: string;
+  blocks?: string[];
+  by?: string;
+}
+
+export function askQuestion(
+  board: Board,
+  input: NewQuestion,
+  now = Date.now(),
+): { board: Board; question: Question } {
+  const taken = new Set(board.questions.map((q) => q.id));
+  const question: Question = {
+    id: slugify(input.text || 'question', taken),
+    text: input.text.trim() || 'Untitled question',
+    detail: (input.detail ?? '').trim(),
+    by: input.by ?? 'agent',
+    at: now,
+    answer: '',
+    answeredAt: null,
+    blocks: [...new Set(input.blocks ?? [])],
+  };
+  return { board: { ...board, questions: [...board.questions, question] }, question };
+}
+
+export function answerQuestion(board: Board, id: string, answer: string, now = Date.now()): Board {
+  const trimmed = answer.trim();
+  if (trimmed === '') return board;
+  return {
+    ...board,
+    questions: board.questions.map((q) =>
+      q.id === id ? { ...q, answer: trimmed, answeredAt: now } : q,
+    ),
+  };
+}
+
+export function deleteQuestion(board: Board, id: string): Board {
+  return { ...board, questions: board.questions.filter((q) => q.id !== id) };
+}
+
+export function openQuestions(board: Board): Question[] {
+  return board.questions.filter((q) => q.answeredAt === null);
+}
+
+/** Task ids an unanswered question is holding up. */
+export function blockedTaskIds(board: Board): Set<string> {
+  return new Set(openQuestions(board).flatMap((q) => q.blocks));
+}
+
+// ---------------------------------------------------------------- routine
+
+export function setRoutine(board: Board, routine: Omit<Routine, 'setAt'>, now = Date.now()): Board {
+  return { ...board, routine: { ...routine, setAt: now } };
+}
+
+export function clearRoutine(board: Board): Board {
+  return { ...board, routine: null };
+}
+
+/**
+ * What the assistant should do next, given the board as it stands.
+ *
+ * The point of computing it here rather than describing it in prose is that
+ * the answer is the same whether it is read by the person looking at the panel
+ * or by the agent calling `working_agreement` — and "keep going" has to be a
+ * decision made from the actual state, not from a vibe.
+ */
+export interface NextStep {
+  /** one line: what to do now */
+  action: string;
+  workable: Task[];
+  blocked: Task[];
+  openQuestions: Question[];
+  proposedDecisions: Decision[];
+}
+
+export function nextStep(board: Board): NextStep {
+  const blockedIds = blockedTaskIds(board);
+  const doneLane = board.lanes[board.lanes.length - 1]?.id;
+  const reviewLane = board.lanes.length >= 2 ? board.lanes[board.lanes.length - 2]?.id : undefined;
+  const live = board.tasks.filter((t) => t.laneId !== doneLane && t.laneId !== reviewLane);
+  const workable = live.filter((t) => !blockedIds.has(t.id));
+  const blocked = live.filter((t) => blockedIds.has(t.id));
+  const questions = openQuestions(board);
+  const proposed = proposedDecisions(board);
+
+  const action =
+    workable.length > 0
+      ? `Take "${workable[0].title}" (${workable[0].id}) — task_get ${workable[0].id}.`
+      : blocked.length > 0
+        ? `Everything left is waiting on an answer: ${questions.map((q) => q.id).join(', ')}. Stop here and say so.`
+        : questions.length > 0 || proposed.length > 0
+          ? 'No work left on the board. Nothing to start, but there are open questions or undecided proposals — say what you are waiting on.'
+          : 'No work left on the board, and nothing outstanding. Say so rather than inventing work.';
+
+  return { action, workable, blocked, openQuestions: questions, proposedDecisions: proposed };
+}
+
+/**
+ * The working agreement, written for the agent that has to follow it.
+ *
+ * Rendered from the routine rather than stored as prose so that turning a rule
+ * off in the wizard actually removes it, instead of leaving a sentence behind
+ * that no longer describes what anyone wants.
+ */
+export function formatRoutineForAgent(board: Board): string {
+  const routine = board.routine;
+  const out: string[] = ['# Working agreement'];
+  if (!routine) {
+    out.push(
+      '',
+      'No routine has been set for this project. Ask the human to set one up in the Control panel, or just work the board: tasks_list → task_get → task_update.',
+    );
+    return out.join('\n');
+  }
+
+  out.push('', 'When you finish what is in front of you, do this instead of stopping:', '');
+  let n = 0;
+  if (routine.recheckBoard) {
+    out.push(
+      `${++n}. **Look at the board again.** Call \`tasks_list\`, take the next card that is not blocked, and \`task_update\` it into the in-progress lane. Only stop when there is nothing workable left.`,
+    );
+  }
+  if (routine.flagDecisions) {
+    out.push(
+      `${++n}. **Write down design decisions, and do not build on them yet.** Anything a reasonable person could disagree with — a shape, a boundary, a dependency, a name that will spread — goes to \`decision_record\` with the alternatives you rejected. It stays *proposed* until a human agrees in the Control panel. Work that only makes sense if a proposed decision is right waits; work that does not, continues.`,
+    );
+  }
+  if (routine.parkQuestions) {
+    out.push(
+      `${++n}. **Park questions instead of halting on them.** Call \`question_ask\` with the task ids it blocks, then pick up work it does not block. Halt and say so only when every remaining task is blocked.`,
+    );
+  }
+  out.push(`${++n}. Call \`working_agreement\` whenever you are unsure what to pick up — it answers with the board as it stands.`);
+
+  if (routine.notes.trim() !== '') {
+    out.push('', '## House rules', '', routine.notes.trim());
+  }
+
+  const step = nextStep(board);
+  out.push(
+    '',
+    '## Right now',
+    '',
+    `- ${step.workable.length} task${step.workable.length === 1 ? '' : 's'} you can work on`,
+    `- ${step.blocked.length} blocked by an unanswered question`,
+    `- ${step.openQuestions.length} question${step.openQuestions.length === 1 ? '' : 's'} waiting on the human`,
+    `- ${step.proposedDecisions.length} design decision${step.proposedDecisions.length === 1 ? '' : 's'} waiting to be agreed`,
+    '',
+    step.action,
+  );
+  return out.join('\n');
 }
 
 // ---------------------------------------------------------------- output

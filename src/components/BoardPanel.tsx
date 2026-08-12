@@ -6,6 +6,8 @@ import {
   deleteTask,
   moveLane,
   moveTask,
+  openQuestions,
+  proposedDecisions,
   removeLane,
   renameLane,
   tasksInLane,
@@ -15,7 +17,11 @@ import {
 } from '../../shared/tasks';
 import { api } from '../api';
 import { toast } from './Toasts';
+import { DecisionsSection, QuestionsSection } from './Collaboration';
+import { RoutineWizard } from './RoutineWizard';
 import type { ModalRequest } from './Menus';
+
+type Section = 'tasks' | 'decisions' | 'questions';
 
 /**
  * The board.
@@ -53,6 +59,8 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
   });
   const dragged = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ laneId: string; index: number } | null>(null);
+  const [section, setSection] = useState<Section>('tasks');
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   const byLane = useMemo(
     () => new Map(board.lanes.map((lane) => [lane.id, tasksInLane(board, lane.id)])),
@@ -103,32 +111,91 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
     if (id) onChange(moveTask(board, id, laneId, index));
   };
 
+  const waitingDecisions = proposedDecisions(board).length;
+  const waitingQuestions = openQuestions(board).length;
+
   return (
     <div className="board" data-testid="board-panel">
       <div className="board-head">
-        <span className="board-title">Tasks</span>
-        <span className="muted board-hint">
-          Cards are written to be pasted into an agent. Your agent can also read these lanes over MCP
-          with <code>tasks_list</code>, and move a card with <code>task_update</code>.
-        </span>
+        <span className="board-title">Control panel</span>
+        {/*
+          Three things the same conversation produces and only one of which the
+          board could hold: the work, the calls made along the way, and what
+          the agent needs from you. They are sections rather than three panels
+          because they are one collaboration.
+        */}
+        <div className="collab-nav" role="tablist" aria-label="Control panel sections">
+          {(
+            [
+              ['tasks', 'Tasks', board.tasks.length],
+              ['decisions', 'Design decisions', waitingDecisions],
+              ['questions', 'Questions', waitingQuestions],
+            ] as const
+          ).map(([id, label, count]) => (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={section === id}
+              className={`collab-nav-tab${section === id ? ' active' : ''}`}
+              onClick={() => setSection(id)}
+              data-testid={`collab-nav-${id}`}
+            >
+              {label}
+              {count > 0 && (
+                <span className={`collab-nav-count${id === 'tasks' ? '' : ' waiting'}`}>{count}</span>
+              )}
+            </button>
+          ))}
+        </div>
         <span className="spacer" />
         <button
-          className="btn"
-          title="Add a lane to this board"
-          onClick={() =>
-            onModal({
-              title: 'New lane',
-              input: { placeholder: 'Blocked', initial: '' },
-              confirmLabel: 'Add lane',
-              onConfirm: (value) => value.trim() && onChange(addLane(board, value)),
-            })
+          className={`btn${board.routine ? '' : ' primary'}`}
+          title={
+            board.routine
+              ? 'Change what the assistant does when it runs out of work'
+              : 'Set up what the assistant does when it runs out of work'
           }
-          data-testid="board-add-lane"
+          onClick={() => setWizardOpen(true)}
+          data-testid="board-routine"
         >
-          + Lane
+          ⚙︎ Routine{board.routine ? '' : '…'}
         </button>
+        {section === 'tasks' && (
+          <button
+            className="btn"
+            title="Add a lane to this board"
+            onClick={() =>
+              onModal({
+                title: 'New lane',
+                input: { placeholder: 'Blocked', initial: '' },
+                confirmLabel: 'Add lane',
+                onConfirm: (value) => value.trim() && onChange(addLane(board, value)),
+              })
+            }
+            data-testid="board-add-lane"
+          >
+            + Lane
+          </button>
+        )}
       </div>
 
+      {section === 'tasks' && (
+        <div className="board-hint-row muted">
+          Cards are written to be pasted into an agent. Your agent can also read these lanes over MCP
+          with <code>tasks_list</code>, and move a card with <code>task_update</code>.
+        </div>
+      )}
+
+      {wizardOpen && (
+        <RoutineWizard board={board} onChange={onChange} onClose={() => setWizardOpen(false)} />
+      )}
+
+      {section === 'decisions' && (
+        <DecisionsSection board={board} onChange={onChange} onSelectFile={onSelectFile} />
+      )}
+      {section === 'questions' && <QuestionsSection board={board} onChange={onChange} />}
+
+      {section === 'tasks' && (
       <div className="board-lanes">
         {board.lanes.map((lane, laneIndex) => {
           const tasks = byLane.get(lane.id) ?? [];
@@ -399,6 +466,7 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
           );
         })}
       </div>
+      )}
     </div>
   );
 }

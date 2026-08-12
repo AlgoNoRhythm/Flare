@@ -131,13 +131,20 @@ test('an external change is flagged as already applied, and the flag is dismissa
   // both waits ride on a filesystem-watcher batch, which under load has taken
   // longer than the default budget
   await expect(page.getByTestId('unreviewed-badge')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByTestId('review-banner')).toContainText('changed since last review', {
-    timeout: 20_000,
-  });
-  // The banner must not imply a gate. The edit is on disk before anyone sees
-  // it, so the copy says so and the action is "dismiss", not "approve".
-  await expect(page.getByTestId('review-banner')).toContainText('already written to disk');
-  await expect(page.getByTestId('btn-approve-all')).toHaveText('Dismiss all');
+  await expect(page.getByTestId('unreviewed-badge')).toContainText('to review', { timeout: 20_000 });
+
+  /*
+   * The chip must not imply a gate. The edit is on disk before anyone sees it,
+   * so the copy says so and the action is "dismiss", not "approve" — the
+   * sentence moved into the tooltip when this stopped being a full-width bar,
+   * but it still has to be there and it still must not say "approve".
+   */
+  const chip = page.getByTestId('review-banner');
+  await expect(chip).toHaveAttribute('title', /already written to disk/);
+  await expect(chip).toHaveAttribute('title', /not a gate/);
+  const dismiss = page.getByTestId('btn-approve-all');
+  await expect(dismiss).toHaveAttribute('aria-label', 'Dismiss all markers');
+  await expect(dismiss).toHaveAttribute('title', /Nothing is approved by doing this/);
 
   // dismissing clears the marker and leaves the file exactly as it was
   const before = fs.readFileSync(path.join(fixture, 'src', 'util.ts'), 'utf8');
@@ -867,6 +874,97 @@ test('MCP exposes the board by lane and an agent can move a task', async () => {
   await page.getByTestId('tab-graph').click();
 });
 
+test('the control panel carries decisions and questions, and the routine says what to do next', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
+    return json.result?.content?.[0]?.text ?? '';
+  };
+
+  // ---- the human sets the routine, in the wizard
+  await page.getByTestId('tab-board').click();
+  await page.getByTestId('board-routine').click();
+  await expect(page.getByTestId('routine-wizard')).toBeVisible();
+  await page.getByTestId('routine-notes').fill('never touch shared/types.ts without asking');
+  await page.getByTestId('routine-next').click();
+  // the preview is generated from the switches, so it already reads as the rules
+  await expect(page.getByTestId('routine-preview')).toContainText('Look at the board again');
+  await expect(page.getByTestId('routine-preview')).toContainText('never touch shared/types.ts');
+  await page.getByTestId('routine-save').click();
+  await expect(page.getByTestId('routine-wizard')).toHaveCount(0);
+
+  // ---- and the agent reads it back, with the state of the board attached
+  const agreement = await call('working_agreement');
+  expect(agreement).toContain('# Working agreement');
+  expect(agreement).toContain('Park questions instead of halting');
+  expect(agreement).toContain('never touch shared/types.ts');
+
+  // ---- a decision arrives proposed, and the agent cannot agree with itself
+  expect(
+    await call('decision_record', {
+      title: 'Resolve scoped imports in the resolver',
+      detail: 'Keeps the parser dependency-free.',
+      alternatives: 'A resolver plugin — rejected, one more moving part.',
+      paths: ['src/util.ts'],
+    }),
+  ).toContain('waiting for a human to agree');
+  expect(await call('decisions_list', { status: 'proposed' })).toContain('[proposed]');
+
+  await page.getByTestId('collab-nav-decisions').click();
+  const decision = page.getByTestId('decision-resolve-scoped-imports-in-the-resolver');
+  await expect(decision).toBeVisible();
+  await expect(decision).toContainText('waiting on you');
+  await expect(decision).toContainText('Keeps the parser dependency-free');
+
+  // ---- a question parks the work it names and nothing else
+  // its own task, so the block is this test's rather than another one's
+  await call('task_create', { title: 'Teach the resolver about symlinks' });
+  const asked = await call('question_ask', {
+    text: 'Should the resolver follow symlinks?',
+    detail: 'Changes what counts as one file.',
+    blocks: ['teach-the-resolver-about-symlinks'],
+  });
+  // the answer to "what now" comes back with the question, not afterwards
+  expect(asked).toContain('asked');
+  expect(asked).toMatch(/Take "|No work left|waiting on an answer/);
+
+  await page.getByTestId('collab-nav-questions').click();
+  const question = page.getByTestId('question-should-the-resolver-follow-symlinks');
+  await expect(question).toBeVisible();
+  await expect(question).toContainText('waiting on you');
+  await expect(question).toContainText('Holds up');
+
+  // ---- the human answers, and the agent sees it and the unblocked task
+  await page.getByTestId('question-answer-input-should-the-resolver-follow-symlinks').fill(
+    'No — treat a symlink as an ordinary file.',
+  );
+  await page.getByTestId('question-answer-should-the-resolver-follow-symlinks').click();
+  await expect(question).toContainText('answered');
+
+  const answers = await call('questions_list');
+  expect(answers).toContain('No — treat a symlink as an ordinary file.');
+  expect(await call('working_agreement')).toContain('0 blocked by an unanswered question');
+
+  // ---- agreeing to the decision clears it from what the agent is waiting on
+  await page.getByTestId('collab-nav-decisions').click();
+  await page
+    .getByTestId('decision-verdict-resolve-scoped-imports-in-the-resolver')
+    .fill('Agreed — keep the parser clean.');
+  await page.getByTestId('decision-agree-resolve-scoped-imports-in-the-resolver').click();
+  await expect(decision).toContainText('agreed');
+  expect(await call('decisions_list', { status: 'agreed' })).toContain('Human said: Agreed');
+  expect(await call('working_agreement')).toContain('0 design decisions waiting to be agreed');
+
+  await page.getByTestId('collab-nav-tasks').click();
+  await page.getByTestId('tab-graph').click();
+});
+
 test('MCP server answers graph queries over HTTP', async () => {
   const url = 'http://127.0.0.1:7411/mcp';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1546,6 +1644,77 @@ test('clicking a changed file in the review shows the red and green of it', asyn
   await page.getByTestId('tab-graph').click();
 });
 
+test('the source and the rendered document stay on the same part of the file', async () => {
+  /*
+   * They used to scroll independently, which meant reading what an agent wrote
+   * involved finding your place twice — the source at section seven while the
+   * preview beside it still showed section one.
+   */
+  // into the README the fixture already has, rather than a new file: a file
+  // created before the first scan has finished is not in the tree yet, and
+  // this test is the first thing to run when the suite is filtered
+  const long = ['# Long', ''];
+  for (let n = 1; n <= 40; n++) long.push(`## Chapter ${n}`, '', `Body of chapter ${n}.`, '');
+  write('README.md', long.join('\n'));
+
+  await page.getByTestId('tree-file-README.md').dblclick();
+  const doc = page.getByTestId('doc-README.md');
+  await expect(doc).toBeVisible({ timeout: 15_000 });
+  await doc.getByTestId('doc-source-show').click();
+  await expect(doc.locator('.doc-source-body .monaco-editor')).toBeVisible({ timeout: 15_000 });
+
+  /** The source line of the block sitting at the top of the rendered pane. */
+  const renderTopLine = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('[data-testid="doc-README.md"] .doc-render');
+      if (!host) return -1;
+      const box = host.getBoundingClientRect();
+      for (const el of host.querySelectorAll<HTMLElement>('.md-block[data-line]')) {
+        if (el.getBoundingClientRect().bottom > box.top + 4) return Number(el.dataset.line);
+      }
+      return -1;
+    });
+
+  /** The 1-based line at the top of the source editor, read off the gutter. */
+  const editorTopLine = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('[data-testid="doc-README.md"] .doc-source-body');
+      const view = host?.querySelector('.monaco-editor');
+      if (!view) return -1;
+      // Monaco positions rows absolutely, so DOM order is not visual order
+      const top = view.getBoundingClientRect().top;
+      let best: { y: number; n: number } | null = null;
+      for (const el of host!.querySelectorAll<HTMLElement>('.line-numbers')) {
+        const box = el.getBoundingClientRect();
+        if (box.bottom <= top + 2) continue;
+        if (!best || box.top < best.y) best = { y: box.top, n: Number(el.textContent) };
+      }
+      return best?.n ?? -1;
+    });
+
+  expect(await renderTopLine()).toBe(0);
+
+  // scrolling the source drags the preview to the same place — not roughly the
+  // same proportion of the way down, the same *line*
+  const editorBox = await doc.locator('.doc-source-body .monaco-editor').boundingBox();
+  await page.mouse.move(editorBox!.x + editorBox!.width / 2, editorBox!.y + editorBox!.height / 2);
+  for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 400);
+  await expect.poll(renderTopLine, { timeout: 10_000 }).toBeGreaterThan(4);
+  const sourceLine = await editorTopLine();
+  const shownLine = await renderTopLine();
+  // within a block: the preview scrolls to whole blocks, the editor to lines
+  expect(Math.abs(sourceLine - 1 - shownLine)).toBeLessThanOrEqual(4);
+
+  // …and scrolling the preview drags the source with it, the other way round
+  const renderBox = await doc.locator('.doc-render').boundingBox();
+  await page.mouse.move(renderBox!.x + renderBox!.width / 2, renderBox!.y + renderBox!.height / 2);
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, 400);
+  await expect.poll(editorTopLine, { timeout: 10_000 }).toBeGreaterThan(sourceLine);
+  expect(Math.abs((await editorTopLine()) - 1 - (await renderTopLine()))).toBeLessThanOrEqual(6);
+
+  await page.getByTestId('tab-graph').click();
+});
+
 test('a rendered document follows the file, and the images it embeds', async () => {
   // a README is mostly the pictures in it, and those are separate files: a
   // change to one used to leave the page showing an image that was gone
@@ -1553,7 +1722,8 @@ test('a rendered document follows the file, and the images it embeds', async () 
   write('README.md', '# fixture\n\nFIRST_TEXT here.\n\n![shot](shot.svg)\n');
 
   await page.getByTestId('tree-file-README.md').dblclick();
-  const render = page.getByTestId('doc-render');
+  // scoped to this document: earlier tests leave their own doc tabs open
+  const render = page.getByTestId('doc-README.md').getByTestId('doc-render');
   await expect(render).toContainText('FIRST_TEXT', { timeout: 15_000 });
   const firstSrc = await render.locator('img').first().getAttribute('src');
   expect(firstSrc).toMatch(/^data:image\/svg/);

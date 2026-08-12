@@ -139,5 +139,22 @@ function renderBlocks(blocks: Block[], props: MarkdownProps, keyBase = ''): Reac
 }
 
 export function Markdown(props: MarkdownProps) {
-  return <div className="md">{renderBlocks(props.blocks, props)}</div>;
+  /*
+   * Each top-level block carries the source line it came from.
+   *
+   * That is the whole mechanism behind keeping this pane and the editor beside
+   * it on the same part of the document: scrolling either one looks for the
+   * nearest `data-line` and matches it. Wrapping rather than cloning, because
+   * a block renders as anything from a <p> to a table in a div, and the
+   * wrapper is the one element whose offset is always measurable.
+   */
+  return (
+    <div className="md">
+      {props.blocks.map((block, i) => (
+        <div key={`w${i}`} className="md-block" data-line={block.line}>
+          {renderBlocks([block], props, `b${i}`)}
+        </div>
+      ))}
+    </div>
+  );
 }

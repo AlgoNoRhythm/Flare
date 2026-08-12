@@ -22,7 +22,7 @@ export type Inline =
   | { type: 'image'; src: string; alt: string; width?: number }
   | { type: 'break' };
 
-export type Block =
+export type BlockKind =
   | { type: 'heading'; depth: number; children: Inline[] }
   | { type: 'paragraph'; children: Inline[] }
   | { type: 'code'; lang: string | null; value: string }
@@ -31,6 +31,17 @@ export type Block =
   | { type: 'table'; head: Inline[][]; align: (('left' | 'right' | 'center') | null)[]; rows: Inline[][][] }
   | { type: 'hr' }
   | { type: 'html'; value: string };
+
+/**
+ * Every block knows which source line it started on.
+ *
+ * That is what lets a rendered document and the editor beside it stay on the
+ * same part of the file: the renderer stamps the line onto the element, so
+ * scrolling one can find the matching place in the other. Nested blocks — a
+ * list item's paragraphs, a quote's contents — are numbered within their own
+ * slice, since nothing needs to map *into* them.
+ */
+export type Block = BlockKind & { line: number };
 
 export interface ListItem {
   /** null when the item is not a task-list entry */
@@ -243,9 +254,15 @@ export function parseMarkdown(source: string): Block[] {
   let i = 0;
 
   const paragraph: string[] = [];
+  /** the line the open paragraph started on, for the stamp below */
+  let paragraphAt = 0;
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
-    blocks.push({ type: 'paragraph', children: parseInline(paragraph.join('\n').trim()) });
+    blocks.push({
+      type: 'paragraph',
+      children: parseInline(paragraph.join('\n').trim()),
+      line: paragraphAt,
+    });
     paragraph.length = 0;
   };
 
@@ -266,6 +283,7 @@ export function parseMarkdown(source: string): Block[] {
         const width = htmlAttr(img[1], 'width');
         blocks.push({
           type: 'paragraph',
+          line: i,
           children: [
             {
               type: 'image',
@@ -289,12 +307,13 @@ export function parseMarkdown(source: string): Block[] {
     const fence = FENCE_RE.exec(line);
     if (fence) {
       flushParagraph();
+      const start = i;
       const marker = fence[1][0].repeat(3);
       const body: string[] = [];
       i++;
       while (i < lines.length && !lines[i].trimStart().startsWith(marker)) body.push(lines[i++]);
       i++; // closing fence
-      blocks.push({ type: 'code', lang: fence[2] || null, value: body.join('\n') });
+      blocks.push({ type: 'code', lang: fence[2] || null, value: body.join('\n'), line: start });
       continue;
     }
 
@@ -307,14 +326,14 @@ export function parseMarkdown(source: string): Block[] {
       const depth = line.trim().startsWith('=') ? 1 : 2;
       const heading = paragraph.join('\n').trim();
       paragraph.length = 0;
-      blocks.push({ type: 'heading', depth, children: parseInline(heading) });
+      blocks.push({ type: 'heading', depth, children: parseInline(heading), line: paragraphAt });
       i++;
       continue;
     }
 
     if (HR_RE.test(line)) {
       flushParagraph();
-      blocks.push({ type: 'hr' });
+      blocks.push({ type: 'hr', line: i });
       i++;
       continue;
     }
@@ -322,25 +341,27 @@ export function parseMarkdown(source: string): Block[] {
     const heading = HEADING_RE.exec(line);
     if (heading) {
       flushParagraph();
-      blocks.push({ type: 'heading', depth: heading[1].length, children: parseInline(heading[2]) });
+      blocks.push({ type: 'heading', depth: heading[1].length, children: parseInline(heading[2]), line: i });
       i++;
       continue;
     }
 
     if (QUOTE_RE.test(line)) {
       flushParagraph();
+      const start = i;
       const inner: string[] = [];
       while (i < lines.length && (QUOTE_RE.test(lines[i]) || (inner.length > 0 && lines[i].trim() !== ''))) {
         inner.push(QUOTE_RE.exec(lines[i])?.[1] ?? lines[i]);
         i++;
       }
-      blocks.push({ type: 'quote', children: parseMarkdown(inner.join('\n')) });
+      blocks.push({ type: 'quote', children: parseMarkdown(inner.join('\n')), line: start });
       continue;
     }
 
     // table: a header row followed by a delimiter row
     if (line.includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
       flushParagraph();
+      const start = i;
       const head = splitRow(line).map(parseInline);
       const align = splitRow(lines[i + 1]).map((c) => {
         const left = c.startsWith(':');
@@ -353,18 +374,19 @@ export function parseMarkdown(source: string): Block[] {
         rows.push(splitRow(lines[i]).map(parseInline));
         i++;
       }
-      blocks.push({ type: 'table', head, align, rows });
+      blocks.push({ type: 'table', head, align, rows, line: start });
       continue;
     }
 
     if (BULLET_RE.test(line) || ORDERED_RE.test(line)) {
       flushParagraph();
       const { block, next } = parseList(lines, i);
-      blocks.push(block);
+      blocks.push({ ...block, line: i });
       i = next;
       continue;
     }
 
+    if (paragraph.length === 0) paragraphAt = i;
     paragraph.push(line);
     i++;
   }
@@ -418,7 +440,8 @@ function parseList(lines: string[], start: number): { block: Block; next: number
   }
 
   return {
-    block: { type: 'list', ordered, start: ordered ? Number(first[2]) : 1, items },
+    // the caller stamps the real line; `start` here is the list's first marker
+    block: { type: 'list', ordered, start: ordered ? Number(first[2]) : 1, items, line: start },
     next: i,
   };
 }

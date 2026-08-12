@@ -51,8 +51,26 @@ describe('blocks', () => {
   });
 
   it('parses a thematic break', () => {
-    expect(first('---')).toEqual({ type: 'hr' });
-    expect(first('***')).toEqual({ type: 'hr' });
+    expect(first('---')).toEqual({ type: 'hr', line: 0 });
+    expect(first('***')).toEqual({ type: 'hr', line: 0 });
+  });
+
+  it('stamps every block with the source line it started on', () => {
+    // this is what keeps the rendered document and the editor beside it on the
+    // same part of the file — see the note on Block
+    const doc = ['# Title', '', 'A paragraph', 'wrapped over two lines.', '', '```ts', 'const a = 1;', '```', '', '- one', '- two', '', '> quoted', '', '| a | b |', '| - | - |', '| 1 | 2 |'].join('\n');
+    expect(parseMarkdown(doc).map((b) => [b.type, b.line])).toEqual([
+      ['heading', 0],
+      ['paragraph', 2],
+      ['code', 5],
+      ['list', 9],
+      ['quote', 12],
+      ['table', 14],
+    ]);
+  });
+
+  it('stamps a setext heading on the line its text began, not its underline', () => {
+    expect(parseMarkdown('\n\nTitle\n=====').map((b) => [b.type, b.line])).toEqual([['heading', 2]]);
   });
 
   it('parses nested lists', () => {

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseMarkdown } from '../../shared/markdown';
 import { previewKindFor, resolveRelative, type PreviewKind } from '../../shared/preview';
 import { api } from '../api';
+import { monaco } from '../monacoSetup';
 import { EditorPane } from './EditorPane';
 import { Markdown } from './Markdown';
 import { Splitter } from './Splitter';
@@ -46,6 +47,117 @@ export function DocumentPane({
   const [sourceWidth, setSourceWidth] = useState(440);
   const [assets, setAssets] = useState<Record<string, string>>({});
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const renderRef = useRef<HTMLDivElement | null>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const scrollSub = useRef<{ dispose(): void } | null>(null);
+  /*
+   * Which half is currently driving.
+   *
+   * Scrolling one moves the other, which fires the other's scroll handler,
+   * which would move the first one back — a fight that reads as the document
+   * juddering under the pointer. So whoever moved first holds the lead for a
+   * moment and the echo is ignored.
+   *
+   * The window has to outlast the *animation*, not just the call: the editor
+   * scrolls smoothly, so it goes on emitting scroll events for a few frames
+   * after being moved. At 150ms those trailing frames grabbed the lead back
+   * and dragged the preview to wherever the animation had got to, which left
+   * the two panes disagreeing at the end of every gesture.
+   */
+  const lead = useRef<{ side: 'source' | 'render'; until: number } | null>(null);
+
+  const takeLead = (side: 'source' | 'render'): boolean => {
+    const now = Date.now();
+    if (lead.current && lead.current.side !== side && now < lead.current.until) return false;
+    lead.current = { side, until: now + 320 };
+    return true;
+  };
+
+  /*
+   * Everything below measures against the *viewport* rather than against
+   * content coordinates.
+   *
+   * `scrollTop` counts from the padding edge while `getBoundingClientRect()`
+   * counts from the border edge, so mixing them silently offsets every
+   * comparison by the pane's top padding — which is what put the source five
+   * lines behind the preview when scrolling from the rendered side.
+   */
+  const renderBlocks = (): { els: HTMLElement[]; originY: number; host: HTMLElement } | null => {
+    const host = renderRef.current;
+    if (!host) return null;
+    const els = [...host.querySelectorAll<HTMLElement>('.md-block[data-line]')];
+    if (els.length === 0) return null;
+    const padding = parseFloat(getComputedStyle(host).paddingTop) || 0;
+    return { els, originY: host.getBoundingClientRect().top + padding, host };
+  };
+
+  const lineOf = (el: HTMLElement): number => Number(el.dataset.line);
+  const yOf = (el: HTMLElement): number => el.getBoundingClientRect().top;
+
+  /** How far the rendered pane must scroll to put `line` at its top. */
+  const renderDeltaForLine = (line: number): number | null => {
+    const found = renderBlocks();
+    if (!found) return null;
+    const { els, originY } = found;
+    let i = 0;
+    while (i + 1 < els.length && lineOf(els[i + 1]) <= line) i++;
+    const here = els[i];
+    const next = els[i + 1];
+    if (!next) return yOf(here) - originY;
+    const span = Math.max(1, lineOf(next) - lineOf(here));
+    const t = Math.min(1, Math.max(0, (line - lineOf(here)) / span));
+    return yOf(here) + t * (yOf(next) - yOf(here)) - originY;
+  };
+
+  /** The source line showing at the top of the rendered document. */
+  const lineForRenderTop = (): number | null => {
+    const found = renderBlocks();
+    if (!found) return null;
+    const { els, originY } = found;
+    let i = 0;
+    while (i + 1 < els.length && yOf(els[i + 1]) <= originY + 1) i++;
+    const here = els[i];
+    const next = els[i + 1];
+    if (!next) return lineOf(here);
+    const gap = Math.max(1, yOf(next) - yOf(here));
+    const t = Math.min(1, Math.max(0, (originY - yOf(here)) / gap));
+    return lineOf(here) + t * (lineOf(next) - lineOf(here));
+  };
+
+  /**
+   * Keep the two halves on the same part of the document.
+   *
+   * They used to scroll independently: the source could be at section seven
+   * while the preview beside it still showed section one, which makes reading
+   * what an agent wrote a matter of finding your place twice. The parser
+   * stamps every block with its source line, so this is a lookup rather than a
+   * guess at proportions — a long code fence no longer drags the two apart.
+   */
+  const attachEditor = useCallback((editor: monaco.editor.IStandaloneCodeEditor | null) => {
+    scrollSub.current?.dispose();
+    scrollSub.current = null;
+    editorRef.current = editor;
+    if (!editor) return;
+    scrollSub.current = editor.onDidScrollChange(() => {
+      if (!takeLead('source')) return;
+      const line = editor.getVisibleRanges()[0]?.startLineNumber;
+      const host = renderRef.current;
+      if (line === undefined || !host) return;
+      const delta = renderDeltaForLine(line - 1);
+      if (delta !== null) host.scrollTop += delta;
+    });
+  }, []);
+
+  useEffect(() => () => scrollSub.current?.dispose(), []);
+
+  const onRenderScroll = (): void => {
+    const editor = editorRef.current;
+    if (!editor || !showSource) return;
+    if (!takeLead('render')) return;
+    const line = lineForRenderTop();
+    if (line === null) return;
+    editor.setScrollTop(editor.getTopForLineNumber(Math.max(1, Math.round(line) + 1)));
+  };
 
   // the document itself
   useEffect(() => {
@@ -131,6 +243,7 @@ export function DocumentPane({
                 path={path}
                 externalVersion={externalVersion}
                 onDirtyChange={onDirtyChange}
+                onReady={attachEditor}
               />
             </div>
           </div>
@@ -152,7 +265,7 @@ export function DocumentPane({
         </button>
       )}
 
-      <div className="doc-render" data-testid="doc-render">
+      <div className="doc-render" data-testid="doc-render" ref={renderRef} onScroll={onRenderScroll}>
         {kind === 'markdown' ? (
           source === null ? (
             <div className="muted doc-status">reading…</div>

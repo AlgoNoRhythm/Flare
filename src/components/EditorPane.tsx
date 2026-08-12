@@ -9,9 +9,17 @@ interface Props {
   /** Scroll to this 1-based line when set (symbol drill-down "open at line"). */
   revealLine?: number;
   onDirtyChange(path: string, dirty: boolean): void;
+  /**
+   * The editor itself, once it exists, and null when it goes away.
+   *
+   * Only the document pane uses it, to keep the rendered half beside this one
+   * on the same part of the file. Must be stable across renders — it is called
+   * from an effect that deliberately does not depend on it.
+   */
+  onReady?(editor: monaco.editor.IStandaloneCodeEditor | null): void;
 }
 
-export function EditorPane({ path, externalVersion, revealLine, onDirtyChange }: Props) {
+export function EditorPane({ path, externalVersion, revealLine, onDirtyChange, onReady }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const savedContentRef = useRef<string>('');
@@ -51,6 +59,7 @@ export function EditorPane({ path, externalVersion, revealLine, onDirtyChange }:
       model: null,
     });
     editorRef.current = editor;
+    onReady?.(editor);
 
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       const model = editor.getModel();
@@ -66,6 +75,7 @@ export function EditorPane({ path, externalVersion, revealLine, onDirtyChange }:
     });
 
     return () => {
+      onReady?.(null);
       editor.getModel()?.dispose();
       editor.dispose();
       editorRef.current = null;

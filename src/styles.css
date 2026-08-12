@@ -84,6 +84,11 @@
   --crit: #d97b7b;
   --crit-soft: #e6a8a8;
   --crit-line: #4d2323;
+  --crit-bg: #241111;
+
+  /* the surface of something that floats over the app rather than sitting in
+     it: opaque on purpose, because it lands on top of code */
+  --bg-float: #171b22;
 
   --violet: #a289c9;
   --magenta: #b0819a;
@@ -349,9 +354,8 @@ body,
   flex-direction: column;
   /* Solid, not a tint over whatever it happens to be covering: this floats
      over the details panel and the terminal, and a half-transparent card on
-     top of a wall of code is unreadable. The blur is only for the edge. */
-  background: rgba(23, 27, 34, 0.985);
-  backdrop-filter: blur(8px);
+     top of a wall of code is unreadable. */
+  background: var(--bg-float);
   border: 1px solid var(--warn-line);
   border-radius: var(--r-lg);
   box-shadow:
@@ -1385,11 +1389,105 @@ button.btn.warn {
 
 .tabs {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   background: var(--n0);
   border-bottom: 1px solid var(--line-faint);
-  overflow-x: auto;
   flex: 0 0 auto;
+}
+
+/* ---------- the four views ----------
+   The app's own surfaces, not documents: a segmented group that stays put
+   while the file tabs beside it scroll, and that reads as navigation rather
+   than as "one more thing someone opened". */
+.view-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 4px 6px;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--n1), var(--n0));
+}
+
+.view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.view-tab:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.view-tab.active {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.view-tab .vt-mark {
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+
+.view-tab:hover .vt-mark {
+  color: var(--ink-muted);
+}
+
+.view-tab.active .vt-mark {
+  color: var(--accent-soft);
+}
+
+/* a count is a reason to look, so it is a badge rather than a trailing number */
+.view-tab .vt-count {
+  min-width: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--n4);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.view-tab .vt-count.warn {
+  background: var(--warn-bg);
+  color: var(--warn-soft);
+}
+
+.view-tab .vt-count.crit {
+  background: var(--crit-bg);
+  color: var(--crit-soft);
+}
+
+.view-tab.active .vt-count {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- open files ----------
+   Lighter than the views by design: these come and go. */
+.file-tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* a hair of air after the divider, so the first file is not welded to it */
+  padding-left: 4px;
+  overflow-x: auto;
 }
 
 .tab {
@@ -1996,16 +2094,65 @@ button.btn.warn {
   color: var(--n10);
 }
 
-.review-banner {
+/* ---------- changed-since-review, in the corner ----------
+   Not a banner: it is on for most of an agent session, and a full-width amber
+   strip that reflows the whole app every time it appears is a shout where a
+   note will do. Floated top-right so it costs no layout at all. */
+.review-chip {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--warn-line);
+  border-radius: 999px;
   background: var(--warn-bg);
-  border-bottom: 1px solid var(--warn-line);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  /* it lives in the drag region of the title bar */
+  -webkit-app-region: no-drag;
+}
+
+.review-chip .rn-mark {
   color: var(--warn);
-  padding: 4px 10px;
-  font-size: 12px;
-  flex: 0 0 auto;
+}
+
+.review-chip .rn-count {
+  font-weight: 600;
+  color: var(--warn-soft);
+  margin-right: 2px;
+}
+
+.rn-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 9px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.rn-btn:hover {
+  background: var(--bg-active);
+  color: var(--ink);
+}
+
+.rn-btn.quiet {
+  background: transparent;
+  color: var(--ink-faint);
+  padding: 2px 6px;
+}
+
+.rn-btn.quiet:hover {
+  color: var(--crit);
+  background: transparent;
 }
 
 .muted {
@@ -3815,6 +3962,308 @@ button.btn:disabled {
   color: var(--accent-soft);
 }
 
+.board-hint-row {
+  flex: 0 0 auto;
+  padding: 8px 14px 0;
+  font-size: 11px;
+  max-width: 900px;
+}
+
+.board-hint-row code,
+.collab code {
+  background: var(--n3);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10.5px;
+  color: var(--accent-soft);
+}
+
+/* ---------- control panel sections ----------
+   Tasks, the decisions made along the way, and what the agent needs answered:
+   one collaboration, three views of it. */
+.collab-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.collab-nav-tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.collab-nav-tab:hover {
+  background: var(--bg-hover);
+  color: var(--ink-dim);
+}
+
+.collab-nav-tab.active {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.collab-nav-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--n4);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* something is waiting on a human — the only count worth a colour */
+.collab-nav-count.waiting {
+  background: var(--warn-bg);
+  color: var(--warn-soft);
+}
+
+.collab {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.collab-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 980px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.collab-empty {
+  padding: 22px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--ink-muted);
+  font-size: 12px;
+  max-width: 720px;
+}
+
+.collab-card {
+  max-width: 980px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+/* waiting on a person is the state worth seeing across the room */
+.collab-card.decision.proposed,
+.collab-card.question.open {
+  border-left-color: var(--warn);
+  background: linear-gradient(90deg, var(--warn-bg), var(--bg-raised) 22%);
+}
+
+.collab-card.decision.agreed {
+  border-left-color: var(--good);
+}
+
+.collab-card.decision.declined {
+  border-left-color: var(--crit);
+}
+
+.collab-card.question.answered {
+  border-left-color: var(--good);
+}
+
+.collab-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collab-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.collab-status {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--n4);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.collab-status.proposed {
+  background: var(--warn-bg);
+  color: var(--warn-soft);
+}
+
+.collab-status.agreed {
+  background: var(--good-line);
+  color: var(--good);
+}
+
+.collab-status.declined {
+  background: var(--crit-bg);
+  color: var(--crit-soft);
+}
+
+.collab-meta {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.collab-body {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+
+.collab-alt,
+.collab-blocks,
+.collab-verdict {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.collab-alt b,
+.collab-blocks b,
+.collab-verdict b {
+  color: var(--ink-2);
+  margin-right: 4px;
+}
+
+.collab-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.collab-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.collab-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--n1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  resize: vertical;
+}
+
+.collab-input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+/* ---------- the routine wizard ---------- */
+.modal.routine-wizard {
+  width: 640px;
+  max-width: 92vw;
+}
+
+.routine-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.routine-rule:hover {
+  border-color: var(--line-strong);
+}
+
+.routine-rule input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.routine-rule .sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+
+.routine-notes {
+  display: block;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.routine-notes textarea {
+  width: 100%;
+  margin-top: 5px;
+  background: var(--n1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.routine-preview {
+  max-height: 46vh;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--n0);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+
 .board-lanes {
   flex: 1;
   min-height: 0;
@@ -4604,7 +5053,14 @@ button.btn:disabled {
   line-height: 1.68;
 }
 
-.md > *:first-child {
+/* Every top-level block is wrapped so it can carry its source line. The
+   wrapper is deliberately styleless: a plain block with no border, padding or
+   margin lets its child's margins collapse straight through it, so the spacing
+   between blocks is exactly what it was before the wrappers existed. Giving it
+   a `display` that establishes a formatting context — flow-root, flex — traps
+   those margins and closes every gap in the document. */
+.md > *:first-child,
+.md > .md-block:first-child > *:first-child {
   margin-top: 0;
 }
 

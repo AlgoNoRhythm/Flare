@@ -2,7 +2,18 @@ import * as http from 'node:http';
 import type { ProjectSession } from '../session';
 import type { GraphEdge, GraphNode } from '../../shared/types';
 import { isTestPath } from '../../shared/graph';
-import { addNote, createTask, resolveLane, tasksInLane, updateTask } from '../../shared/tasks';
+import {
+  addNote,
+  askQuestion,
+  createTask,
+  formatRoutineForAgent,
+  nextStep,
+  openQuestions,
+  recordDecision,
+  resolveLane,
+  tasksInLane,
+  updateTask,
+} from '../../shared/tasks';
 import { McpRegistry, type McpRegistryEntry } from './mcpRegistry';
 import { SlugBook } from './slugs';
 
@@ -508,6 +519,127 @@ const TOOLS: ToolDef[] = [
       const result = createTask(board, { title, brief: args.brief ? String(args.brief) : '', paths, laneId: lane?.id });
       session.setBoard(result.board);
       return `filed "${result.task.title}" as ${result.task.id} in ${lane?.title ?? board.lanes[0]?.title}`;
+    },
+  },
+  {
+    name: 'working_agreement',
+    description:
+      'What this project expects you to do when you finish a piece of work — and what is outstanding right now: workable tasks, tasks blocked by an unanswered question, questions waiting on the human, and design decisions waiting to be agreed. Call it when you are unsure whether to keep going, and instead of stopping.',
+    inputSchema: { type: 'object', properties: {} },
+    handler(_args, session) {
+      return formatRoutineForAgent(session.getBoard());
+    },
+  },
+  {
+    name: 'decisions_list',
+    description:
+      'Design decisions recorded for this project and whether a human has agreed to them. A "proposed" decision is not settled: you may write code that is easy to change if it turns out wrong, but do not build something on it that would be expensive to undo.',
+    inputSchema: {
+      type: 'object',
+      properties: { status: str('proposed | agreed | declined. Omit for all of them.') },
+    },
+    handler(args, session) {
+      const board = session.getBoard();
+      const wanted = args.status ? String(args.status).toLowerCase() : null;
+      const decisions = wanted ? board.decisions.filter((d) => d.status === wanted) : board.decisions;
+      if (decisions.length === 0) return wanted ? `no ${wanted} decisions` : 'no design decisions recorded yet';
+      return decisions
+        .map((d) => {
+          const lines = [`## ${d.title}  [${d.status}]  (${d.id})`, `by ${d.by}`];
+          if (d.detail) lines.push('', d.detail);
+          if (d.alternatives) lines.push('', `Rejected: ${d.alternatives}`);
+          if (d.paths.length > 0) lines.push('', `Files: ${d.paths.join(', ')}`);
+          if (d.verdict) lines.push('', `Human said: ${d.verdict}`);
+          return lines.join('\n');
+        })
+        .join('\n\n');
+    },
+  },
+  {
+    name: 'decision_record',
+    description:
+      'Write down a design decision you are making, with the alternatives you rejected, before the code that assumes it exists. It lands in the Control panel as *proposed* for a human to agree or decline — you must not mark your own decision agreed. Use it for anything a reasonable person could disagree with: a boundary, a dependency, a data shape, a name that will spread.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: str('The decision in one line, e.g. "Parse imports with a lexer rather than a regex".'),
+        detail: str('Why, and what it commits the codebase to.'),
+        alternatives: str('What you considered and rejected, and why.'),
+        paths: { type: 'array', items: { type: 'string' }, description: 'Files it affects.' },
+      },
+      required: ['title'],
+    },
+    handler(args, session) {
+      const title = String(args.title ?? '').trim();
+      if (title === '') return 'a decision needs a title';
+      const result = recordDecision(session.getBoard(), {
+        title,
+        detail: args.detail ? String(args.detail) : '',
+        alternatives: args.alternatives ? String(args.alternatives) : '',
+        paths: Array.isArray(args.paths) ? args.paths.map(String) : [],
+        by: 'agent',
+      });
+      session.setBoard(result.board);
+      return `recorded "${result.decision.title}" as ${result.decision.id}, waiting for a human to agree. Do not build anything expensive on it until they have.`;
+    },
+  },
+  {
+    name: 'questions_list',
+    description:
+      'Questions you have asked the human, and any answers that have arrived. Call it when you come back to blocked work — an answer here unblocks the tasks the question named.',
+    inputSchema: {
+      type: 'object',
+      properties: { open: { type: 'boolean', description: 'true for unanswered only.' } },
+    },
+    handler(args, session) {
+      const board = session.getBoard();
+      const list = args.open === true ? openQuestions(board) : board.questions;
+      if (list.length === 0) return args.open === true ? 'nothing unanswered' : 'no questions asked yet';
+      return list
+        .map((q) => {
+          const lines = [`## ${q.text}  (${q.id})`];
+          if (q.detail) lines.push(q.detail);
+          if (q.blocks.length > 0) lines.push(`Blocks: ${q.blocks.join(', ')}`);
+          lines.push(q.answeredAt ? `Answer: ${q.answer}` : 'Answer: (still waiting)');
+          return lines.join('\n');
+        })
+        .join('\n\n');
+    },
+  },
+  {
+    name: 'question_ask',
+    description:
+      'Ask the human something and carry on. Name the tasks it blocks; everything else stays workable, and you should pick one of those up rather than halting. Stop only when every remaining task is blocked. The answer comes back through questions_list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: str('The question, in one line.'),
+        detail: str('What you will do with either answer — this is what makes it answerable.'),
+        blocks: { type: 'array', items: { type: 'string' }, description: 'Task ids this holds up.' },
+      },
+      required: ['text'],
+    },
+    handler(args, session) {
+      const text = String(args.text ?? '').trim();
+      if (text === '') return 'a question needs to say something';
+      const board = session.getBoard();
+      const blocks = Array.isArray(args.blocks) ? args.blocks.map(String) : [];
+      const unknown = blocks.filter((id) => !board.tasks.some((t) => t.id === id));
+      const result = askQuestion(board, {
+        text,
+        detail: args.detail ? String(args.detail) : '',
+        blocks: blocks.filter((id) => !unknown.includes(id)),
+        by: 'agent',
+      });
+      session.setBoard(result.board);
+      const step = nextStep(result.board);
+      return [
+        `asked "${result.question.text}" as ${result.question.id}.`,
+        unknown.length > 0 ? `Ignored unknown task ids: ${unknown.join(', ')}.` : '',
+        step.action,
+      ]
+        .filter(Boolean)
+        .join(' ');
     },
   },
   {

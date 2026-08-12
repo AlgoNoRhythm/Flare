@@ -46,7 +46,14 @@ import { CommandPalette, type PaletteItem } from './components/CommandPalette';
 import { InsightsPanel } from './components/InsightsPanel';
 import { ReviewPanel } from './components/ReviewPanel';
 import { BoardPanel } from './components/BoardPanel';
-import { boardSummary, createTask, emptyBoard, type Board } from '../shared/tasks';
+import {
+  boardSummary,
+  createTask,
+  emptyBoard,
+  openQuestions,
+  proposedDecisions,
+  type Board,
+} from '../shared/tasks';
 import type { ChangeBurst } from '../shared/activity';
 import { unverifiedCount } from '../shared/activity';
 import { computeInsights, type Insights } from '../shared/insights';
@@ -918,6 +925,11 @@ export function App() {
   }, [unreviewed]);
 
   const unverifiedBursts = useMemo(() => unverifiedCount(bursts), [bursts]);
+  /** decisions and questions the agent has parked for a human to answer */
+  const waitingOnYou = useMemo(
+    () => proposedDecisions(board).length + openQuestions(board).length,
+    [board],
+  );
 
   /**
    * The reuse score per file, for the lens.
@@ -1115,7 +1127,7 @@ export function App() {
           { id: 'tab-graph', label: 'Graph', checked: activeTab === 'graph', run: () => setActiveTab('graph') },
           {
             id: 'tab-board',
-            label: 'Tasks',
+            label: 'Control Panel',
             hint: boardSummary(board) || undefined,
             checked: activeTab === 'board',
             run: () => setActiveTab('board'),
@@ -1662,14 +1674,52 @@ export function App() {
             </a>
           </span>
         )}
+        {/*
+          Changed-since-last-review, as one chip in the corner.
+
+          This was two things: a passive count up here and a full-width amber
+          bar under the toolbar carrying the same number plus three buttons.
+          The bar was on for most of an agent session, said a sentence you had
+          already read, and reflowed the whole app every time it appeared. The
+          count is the part that has to be visible; the sentence is a tooltip,
+          and the ways in are three small buttons on the same chip.
+        */}
         {unreviewed.length > 0 && (
-          <span
-            className="badge warn"
-            title="Files an agent or your editor changed since your last check. They are already saved — this marker is a reminder to look, not a gate. Clear it by dismissing, or undo the change by reverting."
-            data-testid="unreviewed-badge"
+          <div
+            className="review-chip"
+            data-testid="review-banner"
+            title={`${unreviewed.length} file${unreviewed.length === 1 ? '' : 's'} changed since your last review — already written to disk, ordered by risk. This is a reminder to look, not a gate.`}
           >
-            {unreviewed.length} unreviewed
-          </span>
+            <span className="rn-mark" aria-hidden="true">⚠︎</span>
+            <span className="rn-count" data-testid="unreviewed-badge">
+              {unreviewed.length} to review
+            </span>
+            <button
+              className="rn-btn"
+              title="Select the riskiest flagged file and focus the graph on it"
+              onClick={reviewNext}
+              data-testid="btn-review-next"
+            >
+              Next
+            </button>
+            <button
+              className="rn-btn"
+              title="The Review tab shows what each change did, whether anything verified it, and lets you revert a file or a whole burst"
+              onClick={() => setActiveTab('review')}
+              data-testid="btn-open-review"
+            >
+              Open
+            </button>
+            <button
+              className="rn-btn quiet"
+              title="Dismiss all markers. Nothing is approved by doing this — the code is already saved, and this only stops flagging it. To undo a change, use Revert in the Review tab or ↺ History."
+              onClick={approveAll}
+              data-testid="btn-approve-all"
+              aria-label="Dismiss all markers"
+            >
+              ✕
+            </button>
+          </div>
         )}
         <button
           className="btn"
@@ -1681,39 +1731,6 @@ export function App() {
         </button>
         <WindowControls />
       </div>
-
-      {unreviewed.length > 0 && (
-        <div className="review-banner" data-testid="review-banner">
-          <span>
-            ⚠︎ {unreviewed.length} file{unreviewed.length === 1 ? '' : 's'} changed since last review —{' '}
-            <b>already written to disk</b>. Ordered by risk.
-          </span>
-          <button
-            className="btn warn"
-            title="Select the riskiest flagged file and focus the graph on it"
-            onClick={reviewNext}
-            data-testid="btn-review-next"
-          >
-            Review next
-          </button>
-          <button
-            className="btn"
-            title="Clear the amber markers. Nothing is approved by doing this — the code is already saved, and this only stops flagging it. To undo a change, use Revert in the Review tab or ↺ History."
-            onClick={approveAll}
-            data-testid="btn-approve-all"
-          >
-            Dismiss all
-          </button>
-          <button
-            className="btn"
-            title="The Review tab shows what each change did, whether anything verified it, and lets you revert a file or a whole burst"
-            onClick={() => setActiveTab('review')}
-            data-testid="btn-open-review"
-          >
-            Open review →
-          </button>
-        </div>
-      )}
 
       <div className="main-row">
         {sidebarVisible && (
@@ -1794,41 +1811,76 @@ export function App() {
           <div className="main-area" style={{ display: 'flex', flexDirection: 'row' }}>
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <div className="tabs">
-                <div
-                  className={`tab${activeTab === 'graph' ? ' active' : ''}`}
-                  onClick={() => setActiveTab('graph')}
-                  data-testid="tab-graph"
-                >
-                  ◆ Graph
+                {/*
+                  The four views are what the app *is*; the tabs after them are
+                  documents you happened to open. They used to be the same kind
+                  of thing in the same strip, so Review sat at the same weight
+                  as a file called `util.ts` — and scrolled out of reach behind
+                  it once enough files were open. They are their own group now:
+                  pinned, segmented, and carrying the counts that say whether
+                  they want attention.
+                */}
+                <div className="view-tabs" role="tablist" aria-label="Views">
+                  <div
+                    className={`view-tab${activeTab === 'graph' ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={activeTab === 'graph'}
+                    onClick={() => setActiveTab('graph')}
+                    data-testid="tab-graph"
+                    title="The codebase as a map — every file a node, every import an edge"
+                  >
+                    <span className="vt-mark" aria-hidden="true">◆</span> Graph
+                  </div>
+                  <div
+                    className={`view-tab${activeTab === 'board' ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={activeTab === 'board'}
+                    onClick={() => setActiveTab('board')}
+                    data-testid="tab-board"
+                    title="Manage your tasks via MCP — an agent can list them, take one, and move its own card"
+                  >
+                    <span className="vt-mark" aria-hidden="true">☰</span> Control panel
+                    {/* what is waiting on a person outranks how much work exists */}
+                    {waitingOnYou > 0 ? (
+                      <span className="vt-count warn" title="design decisions and questions waiting on you">
+                        {waitingOnYou}
+                      </span>
+                    ) : (
+                      board.tasks.length > 0 && <span className="vt-count">{board.tasks.length}</span>
+                    )}
+                  </div>
+                  <div
+                    className={`view-tab${activeTab === 'review' ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={activeTab === 'review'}
+                    onClick={() => setActiveTab('review')}
+                    data-testid="tab-review"
+                    title="What changed, whether anything checked it, and which files deserve your attention"
+                  >
+                    <span className="vt-mark" aria-hidden="true">✓</span> Review
+                    {unverifiedBursts > 0 && (
+                      <span className="vt-count warn" title="changes nothing has checked">
+                        {unverifiedBursts}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className={`view-tab${activeTab === 'insights' ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={activeTab === 'insights'}
+                    onClick={() => setActiveTab('insights')}
+                    data-testid="tab-insights"
+                    title="Metrics and severity-ranked issues across the repo"
+                  >
+                    <span className="vt-mark" aria-hidden="true">◈</span> Insights
+                    {(insights?.summary.criticals ?? 0) > 0 && (
+                      <span className="vt-count crit" title="critical issues">
+                        {insights!.summary.criticals}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div
-                  className={`tab${activeTab === 'board' ? ' active' : ''}`}
-                  onClick={() => setActiveTab('board')}
-                  data-testid="tab-board"
-                  title="Tasks written to be pasted into an agent — and queryable by one over MCP"
-                >
-                  ☰ Tasks
-                  {board.tasks.length > 0 && <span className="muted"> {board.tasks.length}</span>}
-                </div>
-                <div
-                  className={`tab${activeTab === 'review' ? ' active' : ''}`}
-                  onClick={() => setActiveTab('review')}
-                  data-testid="tab-review"
-                  title="What changed, whether anything checked it, and which files deserve your attention"
-                >
-                  ✓ Review
-                  {unverifiedBursts > 0 && <span style={{ color: '#fab219' }}> {unverifiedBursts}</span>}
-                </div>
-                <div
-                  className={`tab${activeTab === 'insights' ? ' active' : ''}`}
-                  onClick={() => setActiveTab('insights')}
-                  data-testid="tab-insights"
-                >
-                  ◆ Insights
-                  {(insights?.summary.criticals ?? 0) > 0 && (
-                    <span style={{ color: '#d03b3b' }}> {insights!.summary.criticals}</span>
-                  )}
-                </div>
+                <div className="file-tabs">
                 {tabs.map((t) => (
                   <div
                     key={t.key}
@@ -1861,6 +1913,7 @@ export function App() {
                     </span>
                   </div>
                 ))}
+                </div>
               </div>
               <div className="tab-body">
                 <div style={{ position: 'absolute', inset: 0, display: activeTab === 'graph' ? 'block' : 'none' }}>

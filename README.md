@@ -15,6 +15,12 @@ diff against and revert to, per file or as a whole tree.
 
 ![Flare in a minute: opening a folder in the graph, the blast radius of a shared file, four lenses, a task drawn round two files with a box-select, an agent picking that task up over MCP and doing it while the map updates, and the alert Flare raises when it also rewrites a file the rest of the app imports](docs/flare-demo.gif)
 
+*You run the agent in Flare's terminal, and Flare watches: it maps the repo
+from the source, attributes every write to whoever made it, and pulls you in
+when something important changes. The agent takes work from the board and
+asks its questions there, so the two of you are looking at the same project
+rather than at a chat log.*
+
 ## What you get
 
 ![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
@@ -73,20 +79,43 @@ the active lens, cluster bands are coloured by directory.*
   than what it is called. What acts on the *view* — pointer mode bottom-left;
   centre, fit, zoom and the cheat sheet bottom-right — sits on the canvas
   corners rather than in a toolbar strip above it.
-- **Task board** — a kanban of work written to be *handed to an agent*. A card's
-  primary action is **Copy for agent**: it emits the brief plus the files it
-  names plus what the graph knows about them ("29 files downstream, 0%
-  covered, in an import cycle"), so the agent starts from the map instead of
-  spending half its context rediscovering it. File a card straight from a graph
-  selection with right-click → *New task with these files*. Lanes are yours —
-  add, rename, reorder or remove them; removing one rehomes its tasks rather
-  than dropping them.
+- **Control panel** — the collaboration, in three sections. **Tasks** is a
+  kanban of work written to be *handed to an agent*: a card's primary action is
+  **Copy for agent**, which emits the brief plus the files it names plus what
+  the graph knows about them ("29 files downstream, 0% covered, in an import
+  cycle"), so the agent starts from the map instead of spending half its
+  context rediscovering it. File a card straight from a graph selection with
+  right-click → *New task with these files*. Lanes are yours — add, rename,
+  reorder or remove them; removing one rehomes its tasks rather than dropping
+  them.
 
-  The same lanes are queryable over MCP, so an agent can run its own loop:
+  **Design decisions** is for the calls an agent makes without being asked — a
+  boundary, a dependency, a name that will spread. It records them with
+  `decision_record` *before* the code that assumes them, they land as
+  **proposed**, and nothing expensive gets built on one until you agree or
+  decline it with a reason. An agent cannot agree with its own proposal.
+
+  **Questions** is what it needs from you, parked rather than blocking. Each
+  question names the tasks it holds up, so the rest of the board stays
+  workable; the agent picks up something else and halts only when everything
+  left is waiting on an answer. Answer it in the panel and the agent reads it
+  back over MCP.
+
+  All three are queryable over MCP, so an agent can run its own loop:
   `tasks_list` (optionally by lane) to pick up work, `task_get` for the exact
   brief a human would have pasted, `task_update` to log progress and move the
-  card to review, and `task_create` to file follow-up work it finds but
-  shouldn't do now. Moves show up on the board live.
+  card to review, `task_create` to file follow-up work it finds but shouldn't
+  do now, `decision_record`, `question_ask`, and `working_agreement` when it is
+  unsure whether to keep going. Everything shows up in the panel live.
+- **A routine, so it doesn't stop at the first question** — the ⚙︎ Routine
+  wizard sets what the assistant does when it runs out of work: check the board
+  again rather than stopping, flag design decisions you have not agreed to, and
+  park questions instead of halting on them, plus any house rules you type. It
+  renders the working agreement the agent actually reads — generated from the
+  switches, so turning one off removes its rule — and stores it with the
+  project, where `working_agreement` returns it along with the state of the
+  board: how many tasks are workable, how many are blocked, what is waiting on
+  you, and which card to take next.
 - **Review cockpit** — the tab that answers the questions a file-by-file diff
   can't. Changes are grouped into *bursts* (one batch of writes by one author),
   and each burst shows:
@@ -184,9 +213,11 @@ the active lens, cluster bands are coloured by directory.*
   which tests to run before changing files), `recent_activity`,
   `verification_status` (did my changes actually get checked?),
   `record_intent` (state the goal before editing, so the human reviewing the
-  diff isn't reconstructing it) and the board tools — `tasks_list`, `task_get`,
-  `task_update`, `task_create`. The agent asks the IDE about the codebase
-  instead of re-deriving it.
+  diff isn't reconstructing it), the board tools — `tasks_list`, `task_get`,
+  `task_update`, `task_create` — and the collaboration tools:
+  `decision_record`, `decisions_list`, `question_ask`, `questions_list`, and
+  `working_agreement` for what to do next. The agent asks the IDE about the
+  codebase instead of re-deriving it.
 - **Workspace restore** — tabs, lens, active view, panel sizes, collapse
   state, node positions and window bounds all persist per project.
 - **Live change tracking** — a debounced watcher re-parses changed files and
@@ -211,8 +242,8 @@ the active lens, cluster bands are coloured by directory.*
 ## Testing
 
 ```sh
-npm test          # 350 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 73 Playwright tests: 49 driving the real Electron app, 24 driving a browser
+npm test          # 366 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 74 Playwright tests: 50 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 

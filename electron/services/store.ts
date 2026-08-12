@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { ReviewState } from '../../shared/types';
-import { emptyBoard, type Board } from '../../shared/tasks';
+import { emptyBoard, normalizeBoard, type Board } from '../../shared/tasks';
 
 export interface UiState {
   tabs?: { kind: 'file' | 'diff'; path: string }[];
@@ -62,11 +62,9 @@ export class ProjectStore {
         },
         collapsedDirs: raw.collapsedDirs ?? null,
         ui: raw.ui ?? {},
-        // state files written before the board existed simply get an empty one
-        board:
-          raw.board && Array.isArray(raw.board.lanes) && raw.board.lanes.length > 0
-            ? { lanes: raw.board.lanes, tasks: raw.board.tasks ?? [] }
-            : emptyBoard(),
+        // state files written before the board — or before decisions, questions
+        // and the routine were part of it — are filled in rather than discarded
+        board: normalizeBoard(raw.board),
       };
     } catch {
       return structuredClone(EMPTY_STATE);
