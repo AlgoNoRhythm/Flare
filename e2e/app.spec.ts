@@ -1712,6 +1712,18 @@ test('the source and the rendered document stay on the same part of the file', a
   await expect.poll(editorTopLine, { timeout: 10_000 }).toBeGreaterThan(sourceLine);
   expect(Math.abs((await editorTopLine()) - 1 - (await renderTopLine()))).toBeLessThanOrEqual(6);
 
+  /*
+   * And back to the very top, in one burst with no pauses.
+   *
+   * The end of the document is where this used to break: the preview stops
+   * emitting scroll events the moment it reaches zero, so a sync that lost the
+   * race to the editor's own smooth-scrolling was simply never retried, and
+   * the source stayed a dozen lines down while the preview showed the title.
+   */
+  for (let i = 0; i < 20; i++) await page.mouse.wheel(0, -400);
+  await expect.poll(renderTopLine, { timeout: 10_000 }).toBe(0);
+  await expect.poll(editorTopLine, { timeout: 10_000 }).toBe(1);
+
   await page.getByTestId('tab-graph').click();
 });
 

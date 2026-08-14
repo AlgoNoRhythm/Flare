@@ -65,12 +65,32 @@ export function DocumentPane({
    * the two panes disagreeing at the end of every gesture.
    */
   const lead = useRef<{ side: 'source' | 'render'; until: number } | null>(null);
+  const retry = useRef(0);
 
   const takeLead = (side: 'source' | 'render'): boolean => {
     const now = Date.now();
     if (lead.current && lead.current.side !== side && now < lead.current.until) return false;
     lead.current = { side, until: now + 320 };
     return true;
+  };
+
+  /**
+   * Come back to a scroll that lost the race.
+   *
+   * A blocked sync used to be dropped, and that is fine while the events keep
+   * coming — the next one lands. It is not fine at either end of the document:
+   * scroll the preview to the top and it stops emitting events the moment it
+   * hits zero, so if that last one arrived while the editor still held the
+   * lead, nothing ever moved the editor and the two panes sat disagreeing.
+   * Whoever moved last gets the final word once things have settled.
+   */
+  const syncLater = (side: 'source' | 'render'): void => {
+    window.clearTimeout(retry.current);
+    retry.current = window.setTimeout(() => {
+      if (!takeLead(side)) return;
+      if (side === 'render') syncFromRender();
+      else syncFromSource();
+    }, 340);
   };
 
   /*
@@ -133,30 +153,55 @@ export function DocumentPane({
    * stamps every block with its source line, so this is a lookup rather than a
    * guess at proportions — a long code fence no longer drags the two apart.
    */
+  /** Put the preview where the editor is. */
+  const syncFromSource = (): void => {
+    const editor = editorRef.current;
+    const host = renderRef.current;
+    if (!editor || !host) return;
+    const line = editor.getVisibleRanges()[0]?.startLineNumber;
+    if (line === undefined) return;
+    const delta = renderDeltaForLine(line - 1);
+    if (delta !== null) host.scrollTop += delta;
+  };
+
+  /** Put the editor where the preview is. */
+  const syncFromRender = (): void => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const line = lineForRenderTop();
+    if (line === null) return;
+    editor.setScrollTop(editor.getTopForLineNumber(Math.max(1, Math.round(line) + 1)));
+  };
+
   const attachEditor = useCallback((editor: monaco.editor.IStandaloneCodeEditor | null) => {
     scrollSub.current?.dispose();
     scrollSub.current = null;
     editorRef.current = editor;
     if (!editor) return;
     scrollSub.current = editor.onDidScrollChange(() => {
-      if (!takeLead('source')) return;
-      const line = editor.getVisibleRanges()[0]?.startLineNumber;
-      const host = renderRef.current;
-      if (line === undefined || !host) return;
-      const delta = renderDeltaForLine(line - 1);
-      if (delta !== null) host.scrollTop += delta;
+      if (!takeLead('source')) {
+        syncLater('source');
+        return;
+      }
+      syncFromSource();
     });
   }, []);
 
-  useEffect(() => () => scrollSub.current?.dispose(), []);
+  useEffect(
+    () => () => {
+      scrollSub.current?.dispose();
+      window.clearTimeout(retry.current);
+    },
+    [],
+  );
 
   const onRenderScroll = (): void => {
-    const editor = editorRef.current;
-    if (!editor || !showSource) return;
-    if (!takeLead('render')) return;
-    const line = lineForRenderTop();
-    if (line === null) return;
-    editor.setScrollTop(editor.getTopForLineNumber(Math.max(1, Math.round(line) + 1)));
+    if (!editorRef.current || !showSource) return;
+    if (!takeLead('render')) {
+      syncLater('render');
+      return;
+    }
+    syncFromRender();
   };
 
   // the document itself
