@@ -892,10 +892,19 @@ test('the control panel carries decisions and questions, and the routine says wh
   await page.getByTestId('board-routine').click();
   await expect(page.getByTestId('routine-wizard')).toBeVisible();
   await page.getByTestId('routine-notes').fill('never touch shared/types.ts without asking');
+  // the decision rule is a choice, not a switch: flag it and keep building, or
+  // park the work that rests on it. The preview has to change with it.
+  await page.getByTestId('routine-decisions-park').click();
   await page.getByTestId('routine-next').click();
-  // the preview is generated from the switches, so it already reads as the rules
-  await expect(page.getByTestId('routine-preview')).toContainText('Look at the board again');
-  await expect(page.getByTestId('routine-preview')).toContainText('never touch shared/types.ts');
+  // the agreement is generated from the switches, so it already reads as the rules
+  const agreementBox = page.getByTestId('routine-preview');
+  await expect(agreementBox).toHaveValue(/Look at the board again/);
+  await expect(agreementBox).toHaveValue(/leave the work that rests on it/);
+  await expect(agreementBox).toHaveValue(/never touch shared\/types\.ts/);
+  await page.getByTestId('routine-back').click();
+  await page.getByTestId('routine-decisions-flag').click();
+  await page.getByTestId('routine-next').click();
+  await expect(agreementBox).toHaveValue(/carry on and build on it/);
   await page.getByTestId('routine-save').click();
   await expect(page.getByTestId('routine-wizard')).toHaveCount(0);
 
@@ -905,15 +914,40 @@ test('the control panel carries decisions and questions, and the routine says wh
   expect(agreement).toContain('Park questions instead of halting');
   expect(agreement).toContain('never touch shared/types.ts');
 
+  /*
+   * ---- and it can be rewritten, because the switches cover what every
+   * project wants and nothing of what this one wants said in its own words.
+   * What is not editable is the board state Flare appends: that is counted
+   * when the agent asks, so a hand-written copy would go stale immediately.
+   */
+  await page.getByTestId('board-routine').click();
+  await page.getByTestId('routine-next').click();
+  await page.getByTestId('routine-preview').fill('# How we work here\n\nSmall commits. Ask before touching the parser.');
+  await page.getByTestId('routine-save').click();
+
+  const mine = await call('working_agreement');
+  expect(mine).toContain('Ask before touching the parser');
+  expect(mine).not.toContain('Look at the board again');
+  expect(mine).toContain('## Right now');
+
+  // and it goes back to being generated when the edits are thrown away
+  await page.getByTestId('board-routine').click();
+  await page.getByTestId('routine-next').click();
+  await page.getByTestId('routine-reset').click();
+  await expect(page.getByTestId('routine-preview')).toHaveValue(/Look at the board again/);
+  await page.getByTestId('routine-save').click();
+  expect(await call('working_agreement')).toContain('Look at the board again');
+
   // ---- a decision arrives proposed, and the agent cannot agree with itself
-  expect(
-    await call('decision_record', {
-      title: 'Resolve scoped imports in the resolver',
-      detail: 'Keeps the parser dependency-free.',
-      alternatives: 'A resolver plugin — rejected, one more moving part.',
-      paths: ['src/util.ts'],
-    }),
-  ).toContain('waiting for a human to agree');
+  const recorded = await call('decision_record', {
+    title: 'Resolve scoped imports in the resolver',
+    detail: 'Keeps the parser dependency-free.',
+    alternatives: 'A resolver plugin — rejected, one more moving part.',
+    paths: ['src/util.ts'],
+  });
+  expect(recorded).toContain('waiting for a human to agree');
+  // and the reply repeats the project's own rule at the moment it matters
+  expect(recorded).toContain('carry on and build on it');
   expect(await call('decisions_list', { status: 'proposed' })).toContain('[proposed]');
 
   await page.getByTestId('collab-nav-decisions').click();
@@ -962,6 +996,98 @@ test('the control panel carries decisions and questions, and the routine says wh
   expect(await call('working_agreement')).toContain('0 design decisions waiting to be agreed');
 
   await page.getByTestId('collab-nav-tasks').click();
+  await page.getByTestId('tab-graph').click();
+});
+
+/**
+ * The heartbeat, end to end: switching it on writes a stop hook into the
+ * project, and the endpoint that hook calls answers with the board.
+ *
+ * This is the one rule that does not rely on the agent having read anything,
+ * so it is also the one that has to work without it — which means testing the
+ * plain HTTP endpoint a `curl` in a hook would hit, not an MCP tool.
+ */
+test('the heartbeat installs a stop hook and answers it from the board', async () => {
+  const stopHook = async (body: unknown = {}): Promise<Record<string, unknown>> => {
+    const res = await fetch('http://127.0.0.1:7411/hook/stop', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return (await res.json()) as Record<string, unknown>;
+  };
+  const settings = path.join(fixture, '.claude', 'settings.local.json');
+
+  // off by default: nothing written into the project, and no session held open
+  expect(fs.existsSync(settings)).toBe(false);
+  expect(await stopHook()).not.toHaveProperty('decision');
+
+  await page.getByTestId('tab-board').click();
+  await page.getByTestId('board-routine').click();
+  await page.getByTestId('routine-heartbeat').click();
+  await page.getByTestId('routine-next').click();
+  await expect(page.getByTestId('routine-preview')).toContainText('when you try to stop');
+  await page.getByTestId('routine-save').click();
+
+  await expect.poll(() => fs.existsSync(settings), { timeout: 5000 }).toBe(true);
+  const hook = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  expect(hook.hooks.Stop[0].hooks[0].command).toContain('/hook/');
+
+  // a board with workable cards hands one back instead of letting it stop
+  await page.getByTestId('collab-nav-tasks').click();
+  await page.getByTestId('lane-add-todo').click();
+  await page.getByTestId('task-title-input').fill('Teach the resolver about symlinks');
+  await page.getByTestId('task-save').click();
+
+  const blocked = await stopHook();
+  expect(blocked.decision).toBe('block');
+  // and it names a card, because "keep going" on its own is an instruction to
+  // guess. Which card depends on what else this run left on the board.
+  expect(String(blocked.reason)).toMatch(/nobody has started/);
+  expect(String(blocked.reason)).toMatch(/Take "[^"]+"/);
+
+  // …but never twice in a row for the same stop, or the session cannot end
+  expect(await stopHook({ stop_hook_active: true })).not.toHaveProperty('decision');
+
+  /*
+   * And never a card another agent has already started.
+   *
+   * The hook has no idea which agent it is answering, so the only safe answer
+   * is one nobody has claimed. Claiming each card it offers must therefore
+   * empty it out — if a claimed card could come back, two agents would be sent
+   * at the same brief, over and over.
+   */
+  const mcp = async (name: string, args: Record<string, unknown>): Promise<void> => {
+    await fetch('http://127.0.0.1:7411/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    });
+  };
+  const offered = new Set<string>();
+  for (let i = 0; i < 12; i++) {
+    const answer = await stopHook();
+    if (answer.decision !== 'block') break;
+    const id = /Take "[^"]+" \(([^)]+)\)/.exec(String(answer.reason))?.[1];
+    expect(id).toBeTruthy();
+    // the same card must never be offered twice once it has been claimed
+    expect(offered.has(id!)).toBe(false);
+    offered.add(id!);
+    await mcp('task_update', { id, lane: 'in progress' });
+  }
+  expect(offered.size).toBeGreaterThan(0);
+  expect(await stopHook()).not.toHaveProperty('decision');
+
+  // switching it back off takes the hook out of the project again
+  await page.getByTestId('board-routine').click();
+  await page.getByTestId('routine-heartbeat').click();
+  await page.getByTestId('routine-next').click();
+  await page.getByTestId('routine-save').click();
+  await expect
+    .poll(() => JSON.parse(fs.readFileSync(settings, 'utf8')).hooks?.Stop ?? null, { timeout: 5000 })
+    .toBe(null);
+  expect(await stopHook()).not.toHaveProperty('decision');
+
   await page.getByTestId('tab-graph').click();
 });
 

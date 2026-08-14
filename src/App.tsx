@@ -1002,8 +1002,11 @@ export function App() {
         setFocusId(null);
         setExpandedFiles((prev) => (prev.size > 0 ? new Set() : prev));
         // a selection with an action bar over the graph needs a way out that
-        // is not "click precisely on empty board"
+        // is not "click precisely on empty board" — and that includes the
+        // details panel it opened, which otherwise stays up, on every tab,
+        // over whatever you moved on to
         setSelectedPaths((prev) => (prev.size > 0 ? new Set() : prev));
+        setSelected(null);
       }
       if (e.key === 'Delete') {
         const el = e.target as HTMLElement;

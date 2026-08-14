@@ -53,10 +53,18 @@ export function DecisionsSection({ board, onChange, onSelectFile }: DecisionProp
   return (
     <div className="collab" data-testid="decisions-section">
       <div className="collab-intro">
+        {/*
+          The second half of this sentence is the routine's, not ours: under
+          "flag" the work carries on and under "park" it waits, and a fixed
+          line describing one of them is wrong half the time — on the panel
+          where you are deciding what happens next.
+        */}
         <span>
           What the agent decided that you have not agreed to. It records these with{' '}
-          <code>decision_record</code> before writing the code that assumes them, and leaves
-          anything expensive until you say yes.
+          <code>decision_record</code> before writing the code that assumes them
+          {board.routine?.decisions === 'flag'
+            ? ', and keeps building — so declining one tells it exactly what to unwind.'
+            : ', and leaves anything that rests on them until you say yes.'}
         </span>
         <span className="spacer" />
         <button className="btn" onClick={() => setAdding((v) => !v)} data-testid="decision-add">

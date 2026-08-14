@@ -4229,6 +4229,47 @@ button.btn:disabled {
   color: var(--ink-muted);
 }
 
+/* the one rule that is a choice rather than a switch: the switch turns it on,
+   the two options below say what happens to the work while it waits */
+.routine-rule.stack {
+  display: block;
+  cursor: default;
+}
+
+.routine-rule-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.routine-choice {
+  display: flex;
+  gap: 8px;
+  margin: 9px 0 1px 26px;
+}
+
+.routine-option {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--n1);
+  cursor: pointer;
+}
+
+.routine-option:hover {
+  border-color: var(--line-strong);
+}
+
+.routine-option.active {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
 .routine-notes {
   display: block;
   margin-top: 12px;
@@ -4250,6 +4291,9 @@ button.btn:disabled {
 }
 
 .routine-preview {
+  display: block;
+  width: 100%;
+  height: 40vh;
   max-height: 46vh;
   overflow: auto;
   margin-top: 10px;
@@ -4261,6 +4305,34 @@ button.btn:disabled {
   font-size: 11.5px;
   line-height: 1.55;
   color: var(--ink-2);
+  white-space: pre-wrap;
+  resize: vertical;
+}
+
+.routine-preview:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* what gets bolted on to whatever is in the editor above */
+.routine-appendix {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+
+.routine-appendix summary {
+  cursor: pointer;
+}
+
+.routine-appendix pre {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: var(--n0);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  line-height: 1.5;
   white-space: pre-wrap;
 }
 

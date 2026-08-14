@@ -6,14 +6,17 @@ import {
   addNote,
   askQuestion,
   createTask,
+  decisionAdvice,
   formatRoutineForAgent,
   nextStep,
   openQuestions,
   recordDecision,
   resolveLane,
+  stopVerdict,
   tasksInLane,
   updateTask,
 } from '../../shared/tasks';
+import { stopHookReply } from './heartbeat';
 import { McpRegistry, type McpRegistryEntry } from './mcpRegistry';
 import { SlugBook } from './slugs';
 
@@ -533,7 +536,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'decisions_list',
     description:
-      'Design decisions recorded for this project and whether a human has agreed to them. A "proposed" decision is not settled: you may write code that is easy to change if it turns out wrong, but do not build something on it that would be expensive to undo.',
+      'Design decisions recorded for this project and whether a human has agreed to them. A "proposed" decision is not settled — whether you may keep building on one is set by the project routine, which working_agreement will tell you.',
     inputSchema: {
       type: 'object',
       properties: { status: str('proposed | agreed | declined. Omit for all of them.') },
@@ -558,7 +561,7 @@ const TOOLS: ToolDef[] = [
   {
     name: 'decision_record',
     description:
-      'Write down a design decision you are making, with the alternatives you rejected, before the code that assumes it exists. It lands in the Control panel as *proposed* for a human to agree or decline — you must not mark your own decision agreed. Use it for anything a reasonable person could disagree with: a boundary, a dependency, a data shape, a name that will spread.',
+      'Write down an architectural decision you are making, with the alternatives you rejected, before the code that assumes it exists. It lands in the Control panel as *proposed* for a human to agree or decline — you must not mark your own decision agreed. Use it for the calls that shape the codebase: a module boundary, a dependency taken on, the shape of data that will spread, a refactor across several files, a pattern the rest of the code will copy. Not local names or anything one edit would undo. Whether you then build on it or leave that work is set by the project routine — call working_agreement.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -580,7 +583,7 @@ const TOOLS: ToolDef[] = [
         by: 'agent',
       });
       session.setBoard(result.board);
-      return `recorded "${result.decision.title}" as ${result.decision.id}, waiting for a human to agree. Do not build anything expensive on it until they have.`;
+      return `recorded "${result.decision.title}" as ${result.decision.id}, waiting for a human to agree. ${decisionAdvice(result.board)}`;
     },
   },
   {
@@ -836,6 +839,7 @@ export class McpServer {
   // private per-instance endpoint: always serves THIS session
   // ------------------------------------------------------------------
   private async handleLocal(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (await this.handleStopHook(req, res)) return;
     if (await this.offerToMount(req, res, false)) return;
     if (req.method !== 'POST') {
       res.writeHead(req.method === 'GET' ? 405 : 404).end();
@@ -849,6 +853,7 @@ export class McpServer {
   // public gateway endpoint: routes by /mcp/<slug>
   // ------------------------------------------------------------------
   private async handleGateway(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (await this.handleStopHook(req, res)) return;
     if (await this.offerToMount(req, res, true)) return;
     if (req.method !== 'POST') {
       res.writeHead(req.method === 'GET' ? 405 : 404).end();
@@ -917,6 +922,80 @@ export class McpServer {
       }
       return this.dispatch(message);
     });
+  }
+
+  /**
+   * The heartbeat: the assistant's own stop hook, answered by the board.
+   *
+   * Not an MCP tool, because nothing calls it as one — it is a `curl` in a
+   * hook, so it has to be a plain endpoint. It lives on both servers for the
+   * same reason `/mcp/<slug>` does: the hook is written once, pointed at the
+   * well-known port, and has to keep working when the session that installed
+   * it is no longer the one holding that port.
+   *
+   * A hook that cannot be answered must never hold a session hostage, so every
+   * failure here — wrong slug, dead session, unreadable body — lets the stop
+   * through rather than blocking it.
+   */
+  private async handleStopHook(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+    const urlPath = (req.url ?? '/').split('?')[0].replace(/\/+$/, '');
+    const match = /^\/hook(?:\/([\w-]+))?\/stop$/.exec(urlPath);
+    if (!match) return false;
+
+    const allow = (): void => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(stopHookReply(false, '')));
+    };
+
+    const body = req.method === 'POST' ? await readBody(req).catch(() => '') : '';
+    let input: { stop_hook_active?: boolean } = {};
+    try {
+      input = body ? (JSON.parse(body) as typeof input) : {};
+    } catch {
+      input = {};
+    }
+    /*
+     * The assistant sets this when the stop it is asking about was itself
+     * caused by a stop hook. Blocking again there is how a heartbeat turns
+     * into a session that cannot end.
+     */
+    if (input.stop_hook_active === true) {
+      allow();
+      return true;
+    }
+
+    const slug = match[1] ?? null;
+    const target = slug ? this.registry.list().find((e) => e.slug === slug) ?? null : null;
+    if (target && target.pid !== process.pid) {
+      try {
+        const upstream = await fetch(`http://127.0.0.1:${target.port}/hook/${slug}/stop`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: body || '{}',
+          signal: AbortSignal.timeout(4000),
+        });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(await upstream.text());
+      } catch {
+        allow();
+      }
+      return true;
+    }
+
+    const session = this.getSession();
+    if (!session || (slug && slug !== this.slug)) {
+      allow();
+      return true;
+    }
+    const board = session.getBoard();
+    if (!board.routine?.heartbeat) {
+      allow();
+      return true;
+    }
+    const verdict = stopVerdict(board);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(stopHookReply(verdict.keepGoing, verdict.reason)));
+    return true;
   }
 
   private baseUrl(): string {

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { ProjectSession } from './session';
 import { PtyService } from './services/pty';
 import { AgentMonitor } from './services/agents';
+import { syncStopHook } from './services/heartbeat';
 import { McpServer } from './services/mcp';
 import { McpRegistry } from './services/mcpRegistry';
 import { SlugBook } from './services/slugs';
@@ -177,6 +178,25 @@ export function createCore(options: CoreOptions): Core {
       .sort((a, b) => b.openedAt - a.openedAt);
   }
 
+  /**
+   * Keep the assistant's stop hook in step with the routine.
+   *
+   * Here rather than in the session because the hook's whole content is the
+   * MCP URL, which is the server's business and not the board's — and here
+   * rather than in the wizard because the board is also changed over MCP and
+   * by the web client, and a rule that only takes effect when a particular
+   * window is open is not a rule.
+   */
+  function syncHeartbeat(board: Board): void {
+    if (!session || !mcpServer.slug) return;
+    try {
+      syncStopHook(session.root, board.routine?.heartbeat === true, mcpServer.publicPort, mcpServer.slug);
+    } catch {
+      // a settings file that cannot be written is the user's business — it
+      // must not take the board edit down with it
+    }
+  }
+
   async function openProject(root: string): Promise<ProjectInfo> {
     if (session) await session.dispose();
     session = new ProjectSession(root, dataDir, {
@@ -189,7 +209,10 @@ export function createCore(options: CoreOptions): Core {
       onActivity: (bursts) => onEvent('evt:activity', bursts),
       onCommandUpdate: (command) => onEvent('evt:commandUpdate', command),
       onDangerousCommand: (command) => onEvent('evt:dangerousCommand', command),
-      onBoard: (board) => onEvent('evt:board', board),
+      onBoard: (board) => {
+        syncHeartbeat(board);
+        onEvent('evt:board', board);
+      },
     });
     session.attributionProvider = () => agentMonitor.attribution();
     const info = await session.open();

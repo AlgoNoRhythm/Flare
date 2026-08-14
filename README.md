@@ -89,11 +89,13 @@ the active lens, cluster bands are coloured by directory.*
   reorder or remove them; removing one rehomes its tasks rather than dropping
   them.
 
-  **Design decisions** is for the calls an agent makes without being asked — a
-  boundary, a dependency, a name that will spread. It records them with
-  `decision_record` *before* the code that assumes them, they land as
-  **proposed**, and nothing expensive gets built on one until you agree or
-  decline it with a reason. An agent cannot agree with its own proposal.
+  **Design decisions** is for the architectural calls an agent makes without
+  being asked — a module boundary, a dependency taken on, a data shape that
+  will spread, a refactor across several files. It records them with
+  `decision_record` *before* the code that assumes them and they land as
+  **proposed**, for you to agree or decline with a reason; an agent cannot
+  agree with its own proposal. Whether it then keeps building on one or leaves
+  the work that rests on it is your call, set in the routine.
 
   **Questions** is what it needs from you, parked rather than blocking. Each
   question names the tasks it holds up, so the rest of the board stays
@@ -109,13 +111,35 @@ the active lens, cluster bands are coloured by directory.*
   unsure whether to keep going. Everything shows up in the panel live.
 - **A routine, so it doesn't stop at the first question** — the ⚙︎ Routine
   wizard sets what the assistant does when it runs out of work: check the board
-  again rather than stopping, flag design decisions you have not agreed to, and
+  again rather than stopping, record design decisions you have not agreed to —
+  and either keep building on them or park the work that rests on them — and
   park questions instead of halting on them, plus any house rules you type. It
   renders the working agreement the agent actually reads — generated from the
-  switches, so turning one off removes its rule — and stores it with the
-  project, where `working_agreement` returns it along with the state of the
-  board: how many tasks are workable, how many are blocked, what is waiting on
-  you, and which card to take next.
+  switches, so turning one off removes its rule, and **editable**, because the
+  switches cover what every project wants and nothing of what yours wants said
+  in its own words. It stores it with the project, where `working_agreement`
+  returns it along with the state of the board: how many cards are waiting to
+  be picked up, how many are already in progress, how many are blocked, what is
+  waiting on you, and which card to take next.
+
+  That last part is written for more than one agent at a time. A card is only
+  offered if it is still sitting in the first lane — moving it to in-progress
+  is how an agent claims it, and no agent is ever pointed at a card another one
+  has started.
+
+  The last switch is the one that doesn't depend on the agent remembering any
+  of the others: **check the board when it tries to stop**. Flare answers your
+  assistant's stop hook with the state of the board, so a session that tries to
+  end while a card is still workable is handed that card instead, by name. It
+  adds a `Stop` hook to `.claude/settings.local.json` — local to your machine,
+  not committed — and takes it out again when you switch it off. Only ever
+  once per stop, so a session can always end, and never a card someone else has
+  already started.
+
+  Several agents on one board is the case all of this is built for: the panel
+  and every agent write through one place, and a write made against a board
+  that has moved on since is rebased rather than believed — so a click in the
+  panel cannot delete the card an agent filed a second earlier.
 - **Review cockpit** — the tab that answers the questions a file-by-file diff
   can't. Changes are grouped into *bursts* (one batch of writes by one author),
   and each burst shows:

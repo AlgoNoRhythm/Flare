@@ -24,7 +24,7 @@ import {
   type BurstIntent,
   type ChangeBurst,
 } from '../shared/activity';
-import { formatTaskForAgent, type Board, type PathContext } from '../shared/tasks';
+import { formatTaskForAgent, mergeBoards, type Board, type PathContext } from '../shared/tasks';
 import type {
   ChangeEvent,
   CommandLogEntry,
@@ -473,9 +473,38 @@ export class ProjectSession {
     return this.store.board;
   }
 
+  /**
+   * Recent revisions, so a writer that is behind can be caught up rather than
+   * believed.
+   *
+   * Short on purpose: it exists to cover the seconds between a panel being
+   * rendered and a button in it being clicked, not to be a history. Anything
+   * older falls back to the union merge, which loses nothing either.
+   */
+  private boardHistory: Board[] = [];
+
+  /**
+   * Accept a board, from whoever is writing it.
+   *
+   * Every writer goes through here — the panel, the MCP tools, the web client
+   * — and they do not take turns. The MCP tools read and write in the same
+   * tick so they are always current; the UI holds a snapshot for as long as
+   * someone is looking at it, and with agents running that snapshot goes stale
+   * in seconds. Rebasing it here means the panel does not need to know that.
+   */
   setBoard(board: Board): void {
-    this.store.setBoard(board);
-    if (!this.disposed) this.events.onBoard(board);
+    const current = this.store.board;
+    const from = typeof board.rev === 'number' ? board.rev : current.rev;
+    const rebased =
+      from === current.rev
+        ? board
+        : mergeBoards(this.boardHistory.find((b) => b.rev === from) ?? null, current, board);
+    const next = { ...rebased, rev: current.rev + 1 };
+
+    this.boardHistory.push(current);
+    if (this.boardHistory.length > 16) this.boardHistory.shift();
+    this.store.setBoard(next);
+    if (!this.disposed) this.events.onBoard(next);
   }
 
   /** What the graph knows about a set of paths — travels with a task's brief. */

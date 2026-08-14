@@ -542,6 +542,17 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
         if (dir) p = model.placed.get(`@dir:${dir}`);
       }
       if (!p || !container) return;
+      /*
+       * Jumping to a file is the user taking the wheel, exactly as a pan or a
+       * zoom is.
+       *
+       * Without this the auto-frame above still owns the view, so the next
+       * thing that changes the layout — an agent writing a file, a folder
+       * unfolding — re-fits the whole graph and throws away the framing that
+       * was just asked for. Searching for a file while an agent was working
+       * put you back at the whole-repo view a second later, every time.
+       */
+      userMoved.current = true;
       const rect = container.getBoundingClientRect();
       const k = Math.max(viewRef.current.k, 1);
       viewRef.current = {
