@@ -10,9 +10,34 @@
  *
  * One cool ramp now, with a consistent slight blue bias toward the accent, and
  * one scale per semantic hue. Everything else is expressed in these.
+ *
+ * Two layers, and the split between them is what makes a second theme possible
+ * at all:
+ *
+ *   1. the palette — every literal colour the app uses, and nothing else. A
+ *      theme *is* this block, with different values in it.
+ *   2. the roles — the names the rest of the stylesheet actually says:
+ *      --bg-panel, --ink-muted, --line. Written in terms of the palette and
+ *      identical in every theme, so a new theme never restates them and cannot
+ *      forget one.
+ *
+ * The ramp runs surface -> ink rather than dark -> light: --n0 is whatever the
+ * app is painted on, --n13 is whatever text is painted in. On a dark theme
+ * that runs near-black to near-white and on a light one it runs the other way,
+ * which is the whole reason the ~460 `var(--n5)`s in this file do not have to
+ * be touched to add one.
+ *
+ * To add a theme: copy the palette block, change the values, and give the copy
+ * a `[data-theme="name"]` selector. Nothing below the palette needs to know it
+ * exists. Because custom properties resolve where they are used, that selector
+ * also works on a subtree — a panel can be themed differently from the app
+ * around it without a second set of rules.
  */
-:root {
-  /* neutral ramp: n0 deepest surface -> n13 brightest ink */
+
+/* ---------------------------------- palette: what a theme replaces -------- */
+:root,
+[data-theme='dark'] {
+  /* the ramp: n0 is the surface the app sits on, n13 is the ink on it */
   --n0: #0d0f13;
   --n1: #111318;
   --n2: #15181e;
@@ -27,25 +52,6 @@
   --n11: #a1a8b4;
   --n12: #c5cbd4;
   --n13: #e6e9ee;
-
-  /* surfaces */
-  --bg-app: var(--n0);
-  --bg-panel: var(--n1);
-  --bg-raised: var(--n2);
-  --bg-hover: var(--n3);
-  --bg-active: var(--n4);
-
-  /* borders — a hairline is barely there by design; the strong step is hover */
-  --line-faint: var(--n4);
-  --line: var(--n5);
-  --line-strong: var(--n6);
-
-  /* ink */
-  --ink: var(--n13);
-  --ink-dim: var(--n12);
-  --ink-2: var(--n11);
-  --ink-muted: var(--n9);
-  --ink-faint: var(--n8);
 
   /*
    * Accent and status, desaturated for a dark surface. The graph keeps its own
@@ -93,10 +99,189 @@
   --violet: #a289c9;
   --magenta: #b0819a;
 
-  /* elevation: soft and low-contrast; a panel is not a floating card */
+  /*
+   * The graph's own palette — colour here is data, not chrome.
+   *
+   * It lived in src/theme.ts as TypeScript constants, which meant the app had
+   * two places a colour could be written down and no way to keep them in step
+   * except by hand. It is read from here now (see theme.ts), so a theme is
+   * still one block: the categorical slots that colour directory clusters, the
+   * fully-saturated status colours a single card has to carry across a board,
+   * and the two blues the panels use for "information".
+   */
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
+  --cat-neutral: #8a8f98;
+
+  --sig-good: #0ca30c;
+  --sig-warn: #fab219;
+  --sig-serious: #ec835a;
+  --sig-crit: #d03b3b;
+  --info: #86b6ef;
+
+  /*
+   * The editor, for the same reason: Monaco is themed from these rather than
+   * from a second set of hand-picked values. Everything not named here is
+   * derived from the ramp — the surface is --n1, the indent guides are lifted
+   * to --n7 because a 1px hairline needs a bigger step off the background than
+   * a filled shape does.
+   */
+  --bracket-1: #7dbcff;
+  --bracket-2: #d9a441;
+  --bracket-3: #b58bd8;
+
+  /*
+   * Diff colours, stated rather than inherited.
+   *
+   * vs-dark's defaults are near-black tints that vanish against this surface,
+   * so a diff read as two panes of identical-looking code and the reader had
+   * to find the change by eye. The word-level highlight is stronger than the
+   * line wash, so "this line changed" and "this is what changed in it" stay
+   * separable at a glance.
+   */
+  --diff-add-line: #12401f4d;
+  --diff-del-line: #4a13134d;
+  --diff-add-text: #2ea04359;
+  --diff-del-text: #e5484d4d;
+  --diff-add-gutter: #12401f80;
+  --diff-del-gutter: #4a131380;
+  --diff-add-mark: #3fb950cc;
+  --diff-del-mark: #e5484dcc;
+
+  /*
+   * Elevation: soft and low-contrast; a panel is not a floating card.
+   *
+   * Part of the palette rather than the roles because a shadow is a colour
+   * decision — black at these alphas disappears on a dark surface and turns to
+   * soot on a light one, so a theme has to be able to restate them.
+   */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 6px 20px -10px rgba(0, 0, 0, 0.65);
   --shadow-3: 0 18px 44px -20px rgba(0, 0, 0, 0.8);
+}
+
+/*
+ * The light theme.
+ *
+ * Every family in this palette is *positional*, which is what makes an
+ * inversion meaningful rather than a hue-rotate: --n0 is the surface and --n13
+ * the ink either way, and the accent family runs the same direction — the
+ * stylesheet pairs `background: var(--accent-deep)` with
+ * `color: var(--accent-pale)` in eight places, so "deep" is the surface end
+ * and "pale" is the ink on it. On a dark theme that reads as a dark fill under
+ * light text; here it is a light fill under dark text, from the same two
+ * tokens and without a single rule below knowing which theme is on.
+ *
+ * The hues are not the dark ones reused. A colour that carries against
+ * near-black is usually too light to read against white — the categorical
+ * slots, the status colours and the accent are all a step deeper here, chosen
+ * for contrast on the surface they actually land on.
+ */
+[data-theme='light'] {
+  --n0: #ffffff;
+  --n1: #f7f8fb;
+  --n2: #eff1f6;
+  --n3: #e7eaf1;
+  --n4: #dee2ea;
+  --n5: #d2d7e1;
+  --n6: #c0c6d3;
+  --n7: #a7aebd;
+  --n8: #8d95a5;
+  --n9: #737b8b;
+  --n10: #5b6372;
+  --n11: #454c59;
+  --n12: #2e343e;
+  --n13: #171b22;
+
+  --accent: #b8551f;
+  --accent-soft: #96431a;
+  --accent-pale: #6d2f10;
+  --accent-muted: #9c6a4e;
+  --accent-deep: #f2cead;
+  --accent-deep-hover: #ecbc90;
+  --accent-bg: #fdf1e8;
+  --accent-bg-strong: #f8e2d0;
+  --accent-line: #e0b48f;
+
+  --good: #1f7a45;
+  --good-line: #b7ddc4;
+  --warn: #8a6415;
+  --warn-soft: #6d4d0c;
+  --warn-dim: #a8802f;
+  --warn-muted: #7d7256;
+  --warn-line: #e3d3a6;
+  --warn-bg: #fbf4e2;
+  --crit: #b03434;
+  --crit-soft: #8d2020;
+  --crit-line: #eec2c2;
+  --crit-bg: #fdeeee;
+
+  --bg-float: #ffffff;
+
+  --violet: #6b52a0;
+  --magenta: #8a4f6b;
+
+  --cat-1: #1f6fd0;
+  --cat-2: #b8451a;
+  --cat-3: #0f7f59;
+  --cat-4: #8a6600;
+  --cat-5: #b23a68;
+  --cat-6: #16700f;
+  --cat-7: #6a5fd0;
+  --cat-8: #c04545;
+  --cat-neutral: #6b7280;
+
+  --sig-good: #0a7a0a;
+  --sig-warn: #a06c00;
+  --sig-serious: #c25f2e;
+  --sig-crit: #b02a2a;
+  --info: #2c6cb8;
+
+  --bracket-1: #1f6fd0;
+  --bracket-2: #8a6600;
+  --bracket-3: #7a52a8;
+
+  --diff-add-line: #1a7f3722;
+  --diff-del-line: #c9313122;
+  --diff-add-text: #1a7f3745;
+  --diff-del-text: #c9313140;
+  --diff-add-gutter: #1a7f3740;
+  --diff-del-gutter: #c9313140;
+  --diff-add-mark: #1a7f37cc;
+  --diff-del-mark: #c93131cc;
+
+  /* black at the dark theme's alphas turns to soot on white */
+  --shadow-1: 0 1px 2px rgba(23, 27, 34, 0.08);
+  --shadow-2: 0 6px 20px -10px rgba(23, 27, 34, 0.28);
+  --shadow-3: 0 18px 44px -20px rgba(23, 27, 34, 0.4);
+}
+
+/* ---------------------------------- roles: the same in every theme -------- */
+:root {
+  /* surfaces */
+  --bg-app: var(--n0);
+  --bg-panel: var(--n1);
+  --bg-raised: var(--n2);
+  --bg-hover: var(--n3);
+  --bg-active: var(--n4);
+
+  /* borders — a hairline is barely there by design; the strong step is hover */
+  --line-faint: var(--n4);
+  --line: var(--n5);
+  --line-strong: var(--n6);
+
+  /* ink */
+  --ink: var(--n13);
+  --ink-dim: var(--n12);
+  --ink-2: var(--n11);
+  --ink-muted: var(--n9);
+  --ink-faint: var(--n8);
 
   /*
    * Font stacks that resolve on every target OS.
@@ -190,7 +375,7 @@ body,
 .palette-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 8, 10, 0.45);
+  background: var(--scrim);
   z-index: 100;
   display: flex;
   justify-content: center;
@@ -358,10 +543,7 @@ body,
   background: var(--bg-float);
   border: 1px solid var(--warn-line);
   border-radius: var(--r-lg);
-  box-shadow:
-    0 24px 54px -18px rgba(0, 0, 0, 0.9),
-    0 4px 14px -6px rgba(0, 0, 0, 0.7),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-float);
   animation: ra-float-in 260ms cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
@@ -524,7 +706,7 @@ body,
   z-index: 8;
   min-width: 180px;
   max-width: 300px;
-  background: rgba(13, 15, 19, 0.95);
+  background: var(--veil-strong);
   border: 1px solid var(--n6);
   border-radius: 8px;
   padding: 8px 10px;
@@ -701,7 +883,7 @@ body,
 .select-rect {
   position: absolute;
   border: 1px solid var(--accent);
-  background: rgba(57, 135, 229, 0.12);
+  background: var(--band);
   pointer-events: none;
   z-index: 7;
 }
@@ -1126,7 +1308,7 @@ body,
 }
 
 .metrics-table tbody tr:nth-child(even) td {
-  background: rgba(255, 255, 255, 0.014);
+  background: var(--wash);
 }
 
 .metrics-table tbody tr:hover td {
@@ -1134,11 +1316,11 @@ body,
 }
 
 .metrics-table tr.unreviewed td {
-  background: rgba(250, 178, 25, 0.06);
+  background: var(--warn-wash);
 }
 
 .metrics-table tr.unreviewed:hover td {
-  background: rgba(250, 178, 25, 0.11);
+  background: var(--warn-wash);
 }
 
 .file-cell {
@@ -1294,7 +1476,7 @@ button.btn.warn {
 
 .sidebar {
   background: var(--n0);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.016), transparent 180px);
+  background-image: linear-gradient(180deg, var(--wash), transparent 180px);
   border-right: 1px solid var(--line-faint);
   flex: 0 0 auto;
   /* header pinned, tree scrolls under it */
@@ -1475,7 +1657,7 @@ button.btn.warn {
 }
 
 .view-tab.active .vt-count {
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--scrim);
 }
 
 /* ---------- open files ----------
@@ -1558,7 +1740,7 @@ button.btn.warn {
      the strip until it covers the graph */
   max-height: 84px;
   overflow-y: auto;
-  background: rgba(12, 14, 17, 0.85);
+  background: var(--veil);
   border: 1px solid var(--n5);
   border-radius: 6px;
   padding: 4px 10px;
@@ -1642,7 +1824,7 @@ button.btn.warn {
 .lens-switcher {
   display: flex;
   gap: 1px;
-  background: rgba(12, 14, 17, 0.85);
+  background: var(--veil);
   border: 1px solid var(--n5);
   border-radius: 6px;
   overflow: hidden;
@@ -1765,7 +1947,7 @@ button.btn.warn {
 .filetree .row.selected {
   /* the block of solid blue read as a highlighter pen over the name; the
      tint plus an edge says the same thing without shouting */
-  background: linear-gradient(90deg, var(--accent-bg) 0%, rgba(43, 26, 17, 0.35) 100%);
+  background: linear-gradient(90deg, var(--accent-bg) 0%, var(--accent-wash) 100%);
   box-shadow: inset 2px 0 0 var(--accent-muted);
   color: var(--n13);
 }
@@ -1887,7 +2069,7 @@ button.btn.warn {
 
 .details-panel {
   background: var(--n0);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.016), transparent 180px);
+  background-image: linear-gradient(180deg, var(--wash), transparent 180px);
   border-left: 1px solid var(--line-faint);
   overflow-y: auto;
   flex: 0 0 auto;
@@ -2179,7 +2361,7 @@ button.btn.warn {
   content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.045) 1px, transparent 0);
+  background-image: radial-gradient(circle at 1px 1px, var(--wash-strong) 1px, transparent 0);
   background-size: 26px 26px;
   pointer-events: none;
 }
@@ -2317,7 +2499,7 @@ button.btn.warn {
    */
   background-color: var(--n3);
   background-image: var(--card-body);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 8px 18px -10px rgba(0, 0, 0, 0.75);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
   cursor: pointer;
   user-select: none;
@@ -2351,7 +2533,7 @@ button.btn.warn {
 
 .gcard:hover {
   border-color: var(--n7);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5), 0 10px 20px -10px rgba(0, 0, 0, 0.75);
+  box-shadow: var(--shadow-card-hover);
   z-index: 3;
 }
 
@@ -2408,17 +2590,17 @@ button.btn.warn {
 
 .gcard .gb.good {
   color: var(--good);
-  background: rgba(12, 163, 12, 0.14);
+  background: var(--good-wash);
 }
 
 .gcard .gb.warn {
   color: var(--warn);
-  background: rgba(250, 178, 25, 0.14);
+  background: var(--warn-wash);
 }
 
 .gcard .gb.crit {
   color: var(--crit);
-  background: rgba(208, 59, 59, 0.16);
+  background: var(--crit-wash);
 }
 
 .gcard .gagent {
@@ -2434,14 +2616,14 @@ button.btn.warn {
   border-style: solid;
   border-color: var(--n7);
   --card-body:
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.018) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(135deg, var(--wash) 0 6px, transparent 6px 12px),
     linear-gradient(180deg, var(--n5) 0%, var(--n3) 100%);
   background-color: var(--n4);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 1px 0 var(--card-sheen) inset,
     3px 3px 0 -1px var(--n2),
     4px 4px 0 -1px var(--n6),
-    0 10px 22px -12px rgba(0, 0, 0, 0.8);
+    var(--shadow-drop);
 }
 
 .gcard.folder .gname {
@@ -2481,7 +2663,7 @@ button.btn.warn {
 /* states */
 .gcard.sel {
   border-color: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent-soft), 0 8px 22px -10px rgba(95, 168, 255, 0.7);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 8px 22px -10px var(--sel-ring);
   z-index: 4;
 }
 
@@ -2510,10 +2692,10 @@ button.btn.warn {
 
 @keyframes cardpulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(250, 178, 25, 0.55);
+    box-shadow: 0 0 0 0 var(--warn);
   }
   100% {
-    box-shadow: 0 0 0 14px rgba(211, 164, 78, 0);
+    box-shadow: 0 0 0 14px transparent;
   }
 }
 
@@ -2823,7 +3005,7 @@ button.btn.warn {
   cursor: pointer;
   background-image: repeating-linear-gradient(
     135deg,
-    rgba(255, 255, 255, 0.05) 0 8px,
+    var(--wash-strong) 0 8px,
     transparent 8px 16px
   );
 }
@@ -2837,7 +3019,7 @@ button.btn.warn {
   text-align: center;
   font-size: 11px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--n12);
   pointer-events: none;
 }
 
@@ -2882,7 +3064,7 @@ button.btn.warn {
 }
 
 .dtile:hover {
-  border-color: rgba(255, 255, 255, 0.55);
+  border-color: var(--n11);
   z-index: 2;
 }
 
@@ -2893,12 +3075,12 @@ button.btn.warn {
   right: 3px;
   font-size: 9px;
   line-height: 13px;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--n13);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  text-shadow: var(--text-shade);
 }
 
 .dtile-flag {
@@ -2922,14 +3104,14 @@ button.btn.warn {
 }
 
 .dtile.rel {
-  border-color: rgba(217, 164, 65, 0.85);
+  border-color: var(--warn);
 }
 
 .dtile.unrev::after {
   content: '';
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(250, 178, 25, 0.75);
+  border: 1px solid var(--warn);
   border-radius: 2px;
   pointer-events: none;
 }
@@ -2940,10 +3122,10 @@ button.btn.warn {
 
 @keyframes dpulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(211, 164, 78, 0.45);
+    box-shadow: 0 0 0 0 var(--warn-wash);
   }
   100% {
-    box-shadow: 0 0 0 10px rgba(211, 164, 78, 0);
+    box-shadow: 0 0 0 10px transparent;
   }
 }
 
@@ -3005,7 +3187,7 @@ button.btn.warn {
   gap: 10px;
   flex-wrap: wrap;
   max-width: 100%;
-  background: rgba(12, 14, 17, 0.88);
+  background: var(--veil);
   border: 1px solid var(--n5);
   border-left: 3px solid var(--accent);
   border-radius: 6px;
@@ -3473,19 +3655,19 @@ button.btn.warn {
 .verify-pill.good {
   color: var(--good);
   border-color: var(--good-line);
-  background: rgba(12, 163, 12, 0.12);
+  background: var(--good-wash);
 }
 
 .verify-pill.warn {
   color: var(--warn);
   border-color: var(--warn-line);
-  background: rgba(250, 178, 25, 0.12);
+  background: var(--warn-wash);
 }
 
 .verify-pill.crit {
   color: var(--crit);
   border-color: var(--crit-line);
-  background: rgba(208, 59, 59, 0.14);
+  background: var(--crit-wash);
 }
 
 .smell-chip {
@@ -3695,7 +3877,7 @@ button.btn.warn {
 .tier-badge.careful {
   color: var(--crit);
   border-color: var(--crit-line);
-  background: rgba(208, 59, 59, 0.12);
+  background: var(--crit-wash);
 }
 
 .tier-badge.read {
@@ -3756,7 +3938,7 @@ button.btn.warn {
   align-items: center;
   gap: 8px;
   padding: 7px 12px;
-  background: rgba(15, 17, 21, 0.96);
+  background: var(--veil-strong);
   border: 1px solid var(--n6);
   border-radius: 10px;
   box-shadow: var(--shadow-2);
@@ -3828,7 +4010,7 @@ button.btn:disabled {
 }
 
 .command-row.kind-destructive {
-  background: rgba(208, 59, 59, 0.09);
+  background: var(--crit-wash);
 }
 
 .cmd-outcome {
@@ -4706,7 +4888,7 @@ button.btn:disabled {
   padding: 11vh 32px 32px;
   background-image: radial-gradient(
     ellipse 80% 60% at 50% 0%,
-    rgba(224, 138, 82, 0.075),
+    var(--accent-wash),
     transparent 70%
   );
 }
@@ -5322,7 +5504,7 @@ button.btn:disabled {
   padding: 7px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background: rgba(17, 19, 24, 0.97);
+  background: var(--veil-strong);
   box-shadow: var(--shadow-3);
   max-width: calc(100% - 40px);
   overflow-x: auto;
@@ -5550,7 +5732,7 @@ button.btn:disabled {
   background: var(--n1);
   border: 1px solid var(--n4);
   border-radius: var(--r-md);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-3);
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
@@ -5689,7 +5871,7 @@ button.btn:disabled {
   border-radius: var(--r-md);
   background: color-mix(in srgb, var(--n1) 92%, transparent);
   border: 1px solid var(--n5);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  box-shadow: var(--shadow-2);
   backdrop-filter: blur(6px);
 }
 

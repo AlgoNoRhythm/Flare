@@ -1,5 +1,5 @@
 import type { GraphNode } from '../../shared/types';
-import { CATEGORICAL, NEUTRAL_SERIES, STATUS, SURFACE, mixHex } from '../theme';
+import { CATEGORICAL, INK, STATUS, mixHex, neutralSeries, surface } from '../theme';
 
 export type Lens =
   | 'clusters'
@@ -28,8 +28,8 @@ export interface LensDef {
   reading: string;
   scale:
     | { kind: 'clusters' }
-    | { kind: 'ramp'; hue: string; low: string; high: string }
-    | { kind: 'swatches'; items: { color: string; label: string }[] };
+    | { kind: 'ramp'; low: string; high: string }
+    | { kind: 'swatches'; items: { color: () => string; label: string }[] };
 }
 
 export const LENSES: LensDef[] = [
@@ -46,21 +46,21 @@ export const LENSES: LensDef[] = [
     hint: 'What has been touched, and in what order?',
     reading:
       'The session’s changes in order — the brightest file was written last. It stays put once the edits stop, so you can still see what happened an hour later.',
-    scale: { kind: 'ramp', hue: '#d95926', low: 'earlier', high: 'latest' },
+    scale: { kind: 'ramp', low: 'earlier', high: 'latest' },
   },
   {
     id: 'hotspot',
     label: 'Hotspots',
     hint: 'Which files change often AND are hard to change?',
     reading: 'Churn × complexity. Bright files are rewritten constantly and are complex — refactor these first.',
-    scale: { kind: 'ramp', hue: '#e66767', low: 'stable', high: 'hotspot' },
+    scale: { kind: 'ramp', low: 'stable', high: 'hotspot' },
   },
   {
     id: 'risk',
     label: 'Risk',
     hint: 'What breaks the most if an agent edits it?',
     reading: 'Dependents × complexity × untested. Bright files carry the most blast radius — review their diffs closely.',
-    scale: { kind: 'ramp', hue: '#c98500', low: 'safe', high: 'risky' },
+    scale: { kind: 'ramp', low: 'safe', high: 'risky' },
   },
   {
     id: 'tests',
@@ -70,9 +70,9 @@ export const LENSES: LensDef[] = [
     scale: {
       kind: 'swatches',
       items: [
-        { color: STATUS.good, label: 'reached by a test' },
-        { color: STATUS.critical, label: 'no test imports it' },
-        { color: NEUTRAL_SERIES, label: 'is a test' },
+        { color: () => STATUS.good, label: 'reached by a test' },
+        { color: () => STATUS.critical, label: 'no test imports it' },
+        { color: () => neutralSeries(), label: 'is a test' },
       ],
     },
   },
@@ -81,7 +81,7 @@ export const LENSES: LensDef[] = [
     label: 'Coverage',
     hint: 'How many lines does the test suite execute?',
     reading: 'Line coverage from lcov.info. Dim means most lines never run under the suite.',
-    scale: { kind: 'ramp', hue: '#3987e5', low: '0%', high: '100%' },
+    scale: { kind: 'ramp', low: '0%', high: '100%' },
   },
   {
     id: 'instability',
@@ -89,7 +89,7 @@ export const LENSES: LensDef[] = [
     hint: 'Is this a leaf or a foundation?',
     reading:
       'fan-out ÷ (fan-in + fan-out). Bright files mostly consume others and are cheap to change; dim ones are foundations everything rests on.',
-    scale: { kind: 'ramp', hue: '#3987e5', low: 'foundation', high: 'leaf' },
+    scale: { kind: 'ramp', low: 'foundation', high: 'leaf' },
   },
   {
     id: 'reuse',
@@ -97,7 +97,7 @@ export const LENSES: LensDef[] = [
     hint: 'What could be lifted out of here and reused?',
     reading:
       'How cleanly each file would come out as a package. Bright is self-contained logic; dim is welded to the disk, a framework, or the rest of the repo. Unlike Risk and Hotspots this is an absolute scale, not a ranking within this project.',
-    scale: { kind: 'ramp', hue: '#199e70', low: 'welded in', high: 'liftable' },
+    scale: { kind: 'ramp', low: 'welded in', high: 'liftable' },
   },
   {
     id: 'unread',
@@ -108,9 +108,9 @@ export const LENSES: LensDef[] = [
     scale: {
       kind: 'swatches',
       items: [
-        { color: STATUS.critical, label: 'changed, not read' },
-        { color: STATUS.good, label: 'changed and read' },
-        { color: mixHex(NEUTRAL_SERIES, SURFACE, 0.6), label: 'unchanged this session' },
+        { color: () => STATUS.critical, label: 'changed, not read' },
+        { color: () => STATUS.good, label: 'changed and read' },
+        { color: () => mixHex(neutralSeries(), surface(), 0.6), label: 'unchanged this session' },
       ],
     },
   },
@@ -122,8 +122,8 @@ export const LENSES: LensDef[] = [
     scale: {
       kind: 'swatches',
       items: [
-        { color: STATUS.critical, label: 'in an import cycle' },
-        { color: mixHex(NEUTRAL_SERIES, SURFACE, 0.6), label: 'acyclic' },
+        { color: () => STATUS.critical, label: 'in an import cycle' },
+        { color: () => mixHex(neutralSeries(), surface(), 0.6), label: 'acyclic' },
       ],
     },
   },
@@ -140,18 +140,31 @@ export const LENSES: LensDef[] = [
  */
 export function ramp(baseHue: string, value: number): string {
   const v = Math.max(0, Math.min(1, value));
-  const low = mixHex(baseHue, SURFACE, 0.88);
-  const high = mixHex(baseHue, '#ffffff', 0.2);
+  const low = mixHex(baseHue, surface(), 0.88);
+  const high = mixHex(baseHue, INK.primary, 0.2);
   return mixHex(low, high, Math.pow(v, 0.8));
 }
 
-export const LENS_HUES: Partial<Record<Lens, string>> = {
-  activity: '#d95926',
-  hotspot: '#e66767',
-  risk: '#c98500',
-  instability: '#3987e5',
-  reuse: '#199e70',
+/**
+ * Which categorical slot each ramp lens borrows.
+ *
+ * A slot rather than a hex: the colour is whatever the current theme puts in
+ * that slot, so a lens keeps its identity across a theme change without the
+ * same value being written down twice.
+ */
+const HUE_SLOT: Partial<Record<Lens, number>> = {
+  activity: 1,
+  hotspot: 7,
+  risk: 3,
+  instability: 0,
+  coverage: 0,
+  reuse: 2,
 };
+
+export function lensHue(lens: Lens): string {
+  const slot = HUE_SLOT[lens];
+  return slot === undefined ? neutralSeries() : CATEGORICAL[slot];
+}
 
 /**
  * Review-priority score: how dangerous is an unreviewed change to this file?
@@ -173,17 +186,23 @@ export function riskScore(node: GraphNode, coveragePct?: number): number {
 }
 
 /** Stable accent per agent for rings/trails; 'you' stays neutral. */
-const AGENT_ACCENTS = ['#9085e9', '#199e70', '#d55181', '#3987e5', '#c98500'];
-const agentAssignments = new Map<string, string>();
+/**
+ * Which categorical slot each agent gets, in the order they first appear.
+ *
+ * The *slot* is what has to be stable, not the hex — an agent that was
+ * violet before a theme change should still be the violet one after it.
+ */
+const AGENT_SLOTS = [6, 2, 4, 0, 3];
+const agentAssignments = new Map<string, number>();
 
 export function agentColor(agent: string): string {
-  if (agent === 'you' || agent === 'mixed') return NEUTRAL_SERIES;
-  let color = agentAssignments.get(agent);
-  if (!color) {
-    color = AGENT_ACCENTS[agentAssignments.size % AGENT_ACCENTS.length];
-    agentAssignments.set(agent, color);
+  if (agent === 'you' || agent === 'mixed') return neutralSeries();
+  let slot = agentAssignments.get(agent);
+  if (slot === undefined) {
+    slot = AGENT_SLOTS[agentAssignments.size % AGENT_SLOTS.length];
+    agentAssignments.set(agent, slot);
   }
-  return color;
+  return CATEGORICAL[slot];
 }
 
-export { CATEGORICAL, NEUTRAL_SERIES, STATUS };
+export { CATEGORICAL, neutralSeries, STATUS };

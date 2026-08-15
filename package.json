@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Graph-first IDE for agentic coding",
-  "author": "Flare",
+  "author": {
+    "name": "AlgoNoRhythm",
+    "email": "AlgoNoRhythm@users.noreply.github.com"
+  },
   "license": "MIT",
   "main": "dist-electron/main.cjs",
   "scripts": {
@@ -24,7 +27,8 @@
     "appId": "dev.flare.app",
     "productName": "Flare",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**",
@@ -39,13 +43,27 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-Windows-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
     },
     "mac": {
       "target": [
@@ -54,26 +72,48 @@
       ],
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.png",
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "identity": null,
+      "notarize": false,
+      "artifactName": "${productName}-${version}-macOS-${arch}-beta.${ext}"
     },
     "linux": {
       "target": [
         "AppImage",
-        "deb"
+        "deb",
+        "tar.gz"
       ],
       "category": "Development",
       "icon": "build/icon.png",
-      "desktop": {
-        "entry": {
-          "Categories": "Development;IDE;",
-          "StartupWMClass": "Flare",
-          "Comment": "A desktop IDE for agentic coding"
-        }
-      },
-      "synopsis": "A desktop IDE for agentic coding"
+      "maintainer": "AlgoNoRhythm <AlgoNoRhythm@users.noreply.github.com>",
+      "synopsis": "A desktop IDE for agentic coding",
+      "description": "Flare is a graph-first IDE for agentic coding: it maps a repository as a dependency graph, tracks what an agent changes, and exposes the project to assistants over MCP.",
+      "syncDesktopName": true,
+      "executableName": "flare",
+      "artifactName": "${productName}-${version}-Linux-${arch}.${ext}"
     },
     "dmg": {
-      "title": "Flare"
+      "title": "${productName} ${version} (beta)"
+    },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AlgoNoRhythm",
+        "repo": "Flare"
+      }
+    ],
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0"
+      ]
     }
   },
   "dependencies": {
@@ -101,5 +141,11 @@
     "typescript": "^5.8.0",
     "vite": "^6.3.5",
     "vitest": "^3.2.4"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlgoNoRhythm/Flare.git"
+  },
+  "homepage": "https://github.com/AlgoNoRhythm/Flare",
+  "desktopName": "flare.desktop"
 }

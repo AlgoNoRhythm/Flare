@@ -1,7 +1,7 @@
 import type { GraphNode } from '../../shared/types';
 import type { CoverageMap } from '../../shared/coverage';
-import { LENS_HUES, ramp, riskScore, type Lens } from './lenses';
-import { NEUTRAL_SERIES, STATUS, SURFACE, mixHex } from '../theme';
+import { lensHue, ramp, riskScore, type Lens } from './lenses';
+import { CATEGORICAL, STATUS, mixHex, neutralSeries, surface } from '../theme';
 
 export interface LensContext {
   lens: Lens;
@@ -48,14 +48,7 @@ export interface LensContext {
 const RANKED = new Set<Lens>(['hotspot', 'risk']);
 
 /** Lenses drawn with a single-hue ramp rather than fixed swatches. */
-const RAMP_HUE: Partial<Record<Lens, string>> = {
-  activity: LENS_HUES.activity,
-  hotspot: LENS_HUES.hotspot,
-  risk: LENS_HUES.risk,
-  instability: LENS_HUES.instability,
-  coverage: LENS_HUES.instability,
-  reuse: LENS_HUES.reuse,
-};
+const RAMPED = new Set<Lens>(['activity', 'hotspot', 'risk', 'instability', 'coverage', 'reuse']);
 
 /** Raw, un-normalised value for the ranked lenses. */
 function rawValue(node: GraphNode, ctx: LensContext): number {
@@ -159,35 +152,35 @@ export function lensColor(node: GraphNode, ctx: LensContext): string {
     case 'clusters':
       return clusterColor;
     case 'activity':
-      return ramp(LENS_HUES.activity!, activityValue(node.id, ctx));
+      return ramp(lensHue('activity'), activityValue(node.id, ctx));
     case 'hotspot':
-      return ramp(LENS_HUES.hotspot!, ctx.rank(rawValue(node, ctx)));
+      return ramp(lensHue('hotspot'), ctx.rank(rawValue(node, ctx)));
     case 'risk':
-      return ramp(LENS_HUES.risk!, ctx.rank(rawValue(node, ctx)));
+      return ramp(lensHue('risk'), ctx.rank(rawValue(node, ctx)));
     case 'tests':
-      if (node.isTest) return NEUTRAL_SERIES;
+      if (node.isTest) return neutralSeries();
       return node.testedBy > 0 ? STATUS.good : STATUS.critical;
     case 'coverage': {
       const cov = ctx.coverage[node.id];
-      if (!cov) return mixHex(NEUTRAL_SERIES, SURFACE, 0.6);
-      return ramp(LENS_HUES.instability!, cov.pct / 100);
+      if (!cov) return mixHex(neutralSeries(), surface(), 0.6);
+      return ramp(lensHue('coverage'), cov.pct / 100);
     }
     case 'instability': {
       const total = node.inDegree + node.outDegree;
-      return ramp(LENS_HUES.instability!, total === 0 ? 0 : node.outDegree / total);
+      return ramp(lensHue('instability'), total === 0 ? 0 : node.outDegree / total);
     }
     case 'reuse': {
       const score = ctx.reuse[node.id];
       // too little in the file to be worth the question — not "unreusable"
-      if (score === null || score === undefined) return mixHex(NEUTRAL_SERIES, SURFACE, 0.6);
-      return ramp(LENS_HUES.reuse!, score / 100);
+      if (score === null || score === undefined) return mixHex(neutralSeries(), surface(), 0.6);
+      return ramp(lensHue('reuse'), score / 100);
     }
     case 'unread':
-      if ((ctx.changedAt[node.id] ?? 0) === 0) return mixHex(NEUTRAL_SERIES, SURFACE, 0.6);
+      if ((ctx.changedAt[node.id] ?? 0) === 0) return mixHex(neutralSeries(), surface(), 0.6);
       return isUnread(node.id, ctx) ? STATUS.critical : STATUS.good;
     case 'cycles':
-      if (node.cycleId === null) return mixHex(NEUTRAL_SERIES, SURFACE, 0.6);
-      return [STATUS.critical, '#d95926', '#d55181', '#9085e9'][node.cycleId % 4];
+      if (node.cycleId === null) return mixHex(neutralSeries(), surface(), 0.6);
+      return [STATUS.critical, CATEGORICAL[1], CATEGORICAL[4], CATEGORICAL[6]][node.cycleId % 4];
     default:
       return clusterColor;
   }
@@ -250,7 +243,7 @@ export function aggregateLens(
   maxCx: number,
 ): { value: number; color: string } {
   if (members.length === 0) return { value: 0, color: ctx.clusterColor('') };
-  const hue = RAMP_HUE[ctx.lens];
+  const hue = RAMPED.has(ctx.lens) ? lensHue(ctx.lens) : undefined;
   if (hue && MEAN_AGGREGATE.has(ctx.lens)) {
     const mean = members.reduce((sum, n) => sum + lensValue(n, ctx, maxCx), 0) / members.length;
     return { value: mean, color: ramp(hue, mean) };

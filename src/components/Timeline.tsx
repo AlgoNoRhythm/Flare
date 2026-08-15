@@ -38,7 +38,7 @@ export function Timeline({ refreshKey, onOpenDiff, onRestored, onClose }: Props)
         )}
         {sel && confirming && (
           <>
-            <span style={{ color: '#e66767', fontSize: 12 }}>
+            <span style={{ color: 'var(--crit)', fontSize: 12 }}>
               Revert every file to this snapshot? A new snapshot is taken first, so this is undoable.
             </span>
             <button

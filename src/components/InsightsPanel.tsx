@@ -1,17 +1,23 @@
 import { useMemo, useState } from 'react';
 import type { FileMetrics, Insights, Issue, IssueSeverity } from '../../shared/insights';
 import { formatPathsTree } from '../../shared/pathFormat';
-import { UI_STATUS } from '../theme';
+import { INK, UI_STATUS, info } from '../theme';
 import { agentColor } from '../graph/lenses';
 import { api } from '../api';
 import { toast } from './Toasts';
 import { num, plural, scoreLabel } from '../format';
 
-const SEV_COLOR: Record<IssueSeverity, string> = {
-  critical: UI_STATUS.critical,
-  warning: UI_STATUS.warning,
-  info: '#86b6ef',
-};
+/**
+ * Resolved per render, not at import.
+ *
+ * A module-level map of hexes is read once, when the bundle loads, and then
+ * keeps the palette it was built with — which is invisible until the day the
+ * theme can change underneath it.
+ */
+function sevColor(severity: IssueSeverity): string {
+  if (severity === 'critical') return UI_STATUS.critical;
+  return severity === 'warning' ? UI_STATUS.warning : info();
+}
 
 const SEV_ICON: Record<IssueSeverity, string> = { critical: '●', warning: '⚠︎', info: 'ℹ︎' };
 
@@ -99,7 +105,7 @@ function reuseColor(value: number | null): string | undefined {
 }
 
 function scoreColor(value: number): string {
-  return value >= 70 ? UI_STATUS.critical : value >= 40 ? UI_STATUS.warning : '#6f8299';
+  return value >= 70 ? UI_STATUS.critical : value >= 40 ? UI_STATUS.warning : INK.muted;
 }
 
 function Tile({
@@ -328,7 +334,7 @@ export function InsightsPanel({ insights, onSelectFile, onOpenFile }: Props) {
               <div
                 key={issue.id}
                 className={`issue sev-${issue.severity}`}
-                style={{ borderLeftColor: SEV_COLOR[issue.severity] }}
+                style={{ borderLeftColor: sevColor(issue.severity) }}
                 data-testid={`issue-${issue.rule}`}
               >
                 <div className="issue-title">

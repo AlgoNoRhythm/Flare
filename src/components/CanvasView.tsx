@@ -42,6 +42,15 @@ export interface GraphStats {
 
 export interface CanvasProps {
   graphVersion: number;
+  /**
+   * Which theme is on.
+   *
+   * Not read directly — the colours come from the live palette. It is here
+   * because every colour in this view is memoised, and a memo with no reason
+   * to recompute keeps the palette it was built with: switching to light
+   * left the graph painted in the dark one until something else changed.
+   */
+  theme: string;
   fullNodes: ReadonlyMap<string, GraphNode>;
   fullEdges: ReadonlyMap<string, GraphEdge>;
   projectRoot: string;
@@ -118,6 +127,7 @@ function isUnreviewed(path: string, changedAt: Record<string, number>, review: R
 export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function CanvasView(props, ref) {
   const {
     graphVersion,
+    theme,
     fullNodes,
     fullEdges,
     projectRoot,
@@ -336,7 +346,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
       clusterColor: (c) => clusterColorRef.current(c),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lens, churn, coverage, reuse, changedAt, reviewInfo, graphVersion]);
+  }, [lens, churn, coverage, reuse, changedAt, reviewInfo, graphVersion, theme]);
 
   // A collapsed folder takes the colour of its worst member under the active
   // lens, so switching to Risk/Hotspots is still meaningful while collapsed.

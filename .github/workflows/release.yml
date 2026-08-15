@@ -1,0 +1,92 @@
+name: Release
+
+# Tag a version to cut a release:
+#
+#   npm version 0.2.0 && git push --follow-tags
+#
+# Each platform is built on its own runner, because each has to be: an
+# Electron app carries a native module (@lydell/node-pty), and the prebuild npm
+# installs is the one for the machine doing the installing. Cross-building
+# would produce a package whose terminal does not open — on someone else's
+# computer, after release.
+#
+# electron-builder uploads to a *draft* GitHub release, so nothing is public
+# until the artifacts are all there and someone has looked at them.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build the installers but do not upload them'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # one platform failing should not throw away the others: a release with
+      # three of four installers is worth having while the fourth is fixed
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows (x64)
+            os: windows-latest
+          - name: macOS (Apple silicon)
+            os: macos-latest
+          # Intel Macs are a separate runner rather than a cross-build, for the
+          # native-module reason above. Pinned: macos-latest is arm64 now.
+          - name: macOS (Intel)
+            os: macos-13
+          - name: Linux (x64)
+            os: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        # The unit suite only. The end-to-end suites drive a real Electron
+        # window and a browser, which needs a display server this job does not
+        # have — they run on a developer's machine before the tag is cut.
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package and upload
+        if: ${{ github.event_name == 'push' }}
+        run: npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package only
+        if: ${{ github.event_name != 'push' }}
+        run: npx electron-builder --publish never
+
+      - name: Keep the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: flare-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz

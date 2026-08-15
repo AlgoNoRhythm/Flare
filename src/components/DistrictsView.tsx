@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { makeClusterColors, mixHex } from '../theme';
+import { STATUS, makeClusterColors, mixHex, panel, surface } from '../theme';
 import { agentColor } from '../graph/lenses';
 import { buildLensContext, lensColor, lensValue, type LensContext } from '../graph/lensColor';
 import type { CanvasProps, GraphViewHandle } from './CanvasView';
@@ -202,7 +202,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
       clusterColor: (c) => clusterColorRef.current(c),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lens, churn, coverage, changedAt, reviewInfo, graphVersion]);
+  }, [lens, churn, coverage, changedAt, reviewInfo, graphVersion, props.theme]);
 
   const maxCx = useMemo(() => {
     let m = 1;
@@ -373,9 +373,9 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
               top: b.y,
               width: b.w,
               height: b.h,
-              borderColor: mixHex(clusterColorRef.current(b.cluster === '(root)' ? '' : b.cluster), '#101216', 0.45),
+              borderColor: mixHex(clusterColorRef.current(b.cluster === '(root)' ? '' : b.cluster), panel(), 0.45),
               background: b.collapsed
-                ? mixHex(clusterColorRef.current(b.cluster === '(root)' ? '' : b.cluster), '#101216', 0.6)
+                ? mixHex(clusterColorRef.current(b.cluster === '(root)' ? '' : b.cluster), panel(), 0.6)
                 : undefined,
             }}
           >
@@ -437,7 +437,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
                 top: t.y,
                 width: Math.max(1, t.w - 2),
                 height: Math.max(1, t.h - 2),
-                background: mixHex('#141720', base, intensity),
+                background: mixHex(surface(), base, intensity),
               }}
               title={`${n.id}\n${n.loc} loc · cx ${n.complexity}${coverage[n.id] ? ` · ${Math.round(coverage[n.id].pct)}% covered` : ''}`}
               onClick={(e) => {
@@ -454,7 +454,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
               {unrev && (
                 <span
                   className="dtile-flag"
-                  style={{ background: agent && agent !== 'you' ? agentColor(agent) : '#fab219' }}
+                  style={{ background: agent && agent !== 'you' ? agentColor(agent) : STATUS.warning }}
                 />
               )}
             </div>

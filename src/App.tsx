@@ -63,6 +63,7 @@ import { RiskAlerts } from './components/RiskAlerts';
 import { riskAlerts, type RiskAlert } from '../shared/riskAlerts';
 import { baseSnapshotFor } from '../shared/review';
 import { LENSES, riskScore, type Lens } from './graph/lenses';
+import { THEMES, applyTheme, currentTheme, onThemeChange, storedChoice, type ThemeChoice, type ThemeName } from './theme';
 import { buildLensContext, lensSignal } from './graph/lensColor';
 import {
   DRILL_ABOVE,
@@ -157,6 +158,18 @@ export function App() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [lens, setLens] = useState<Lens>('clusters');
+  /*
+   * The theme, mirrored into React state.
+   *
+   * The stylesheet repaints itself the moment the attribute changes; this is
+   * for the views that draw with colours read out of it — the canvas, the
+   * wheel, the districts. They need a render to pick the new palette up, and
+   * a state change is what asks for one.
+   */
+  const [theme, setTheme] = useState<ThemeName>(() => currentTheme());
+  /** what was chosen, which may be "whatever the machine says" */
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice>(() => storedChoice());
+  useEffect(() => onThemeChange(setTheme), []);
   const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(new Set());
   const [symbolGraphs, setSymbolGraphs] = useState<ReadonlyMap<string, SymbolGraph>>(new Map());
@@ -1161,6 +1174,21 @@ export function App() {
           { id: 'zoom-out', label: 'Zoom Out', hint: 'Ctrl -', run: () => graphRef.current?.zoom(-1) },
           { id: 'zoom-fit', label: 'Fit to Screen', hint: 'Ctrl 0', run: () => graphRef.current?.fitView() },
           { id: 'sep3', separator: true },
+          {
+            id: 'theme',
+            label: 'Theme',
+            hint: THEMES.find((t) => t.id === themeChoice)?.label,
+            submenu: THEMES.map((t) => ({
+              id: `theme-${t.id}`,
+              label: t.label,
+              checked: themeChoice === t.id,
+              run: () => {
+                setThemeChoice(t.id);
+                applyTheme(t.id);
+              },
+            })),
+          },
+          { id: 'sep4', separator: true },
           { id: 'palette', label: 'Command Palette...', hint: 'Ctrl+K', run: () => setPaletteOpen(true) },
         ],
       },
@@ -1655,7 +1683,7 @@ export function App() {
         {(insights?.summary.criticals ?? 0) > 0 && (
           <span
             className="badge warn alert-badge"
-            style={{ color: '#f0a0a0', borderColor: '#d03b3b' }}
+            style={{ color: 'var(--crit-soft)', borderColor: 'var(--sig-crit)' }}
             onClick={() => setActiveTab('insights')}
             data-testid="alert-badge"
             title="open Insights"
@@ -1936,6 +1964,7 @@ export function App() {
                   <ActiveGraphView
                     kind={graphView}
                     ref={graphRef}
+                    theme={theme}
                     graphVersion={graphVersion}
                     fullNodes={fullNodesRef.current}
                     fullEdges={fullEdgesRef.current}
@@ -2377,7 +2406,7 @@ export function App() {
         {unreviewed.length > 0 && (
           <span
             className="item"
-            style={{ color: '#fab219', cursor: 'pointer' }}
+            style={{ color: 'var(--sig-warn)', cursor: 'pointer' }}
             title="Files changed since you last approved, ordered by how much depends on them. Click to jump to the riskiest."
             onClick={reviewNext}
           >
@@ -2388,7 +2417,7 @@ export function App() {
         {mcpInfo.port > 0 && (
           <span
             className="item"
-            style={{ cursor: 'pointer', color: '#199e70' }}
+            style={{ cursor: 'pointer', color: 'var(--cat-3)' }}
             title="MCP server for agents — click to copy the project-scoped `claude mcp add` command. For Codex and opencode, use ◆ Connect agent above the terminal."
             data-testid="mcp-indicator"
             onClick={() => {

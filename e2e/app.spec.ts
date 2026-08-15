@@ -874,6 +874,76 @@ test('MCP exposes the board by lane and an agent can move a task', async () => {
   await page.getByTestId('tab-graph').click();
 });
 
+/**
+ * A theme is one block of tokens, and everything follows it.
+ *
+ * Three things in the app draw outside CSS — the graph, the editor and the
+ * terminal — and each of them used to carry its own hard-coded palette. So the
+ * assertions here are deliberately not "the stylesheet changed": they check a
+ * colour that comes from the stylesheet, one that Monaco resolved, and one the
+ * canvas painted, because those are the three that can independently fail.
+ */
+test('the theme switches the whole app, and is remembered', async () => {
+  const bg = (selector: string) =>
+    page.locator(selector).first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  const cardColour = () =>
+    page.locator('.gcard').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+
+  const pick = async (id: 'system' | 'dark' | 'light') => {
+    await page.getByTestId('menu-view').click();
+    await page.getByTestId('menu-item-theme').hover();
+    await page.getByTestId(`menu-item-theme-${id}`).click();
+  };
+
+  await page.getByTestId('tab-graph').click();
+  await expect(page.locator('.gcard').first()).toBeVisible();
+  /*
+   * Pin dark first rather than assuming it.
+   *
+   * The default follows the desktop, so on a machine set to light this test
+   * used to start light and then "switch" to light — and pass by measuring
+   * nothing at all.
+   */
+  await pick('dark');
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+  const darkApp = await bg('body');
+  const darkCard = await cardColour();
+  const darkEditor = await bg('.monaco-editor .monaco-editor-background').catch(() => '');
+
+  await pick('light');
+
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
+    .toBe('light');
+  // the stylesheet: every rule resolves against the palette that matches
+  await expect.poll(() => bg('body')).not.toBe(darkApp);
+  // the canvas: colours it read out of the tokens, through a memo that has to
+  // know the theme changed or it keeps the palette it was built with
+  await expect.poll(cardColour).not.toBe(darkCard);
+
+  // a light theme is only light if it is actually light
+  const lightApp = await bg('body');
+  const channels = /(\d+), (\d+), (\d+)/.exec(lightApp)!.slice(1).map(Number);
+  expect(channels.every((c) => c > 200)).toBe(true);
+
+  // and it survives the app being reopened
+  await page.reload();
+  await page.waitForSelector('[data-testid="menubar"]', { timeout: 40_000 });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.dataset.theme))
+    .toBe('light');
+
+  await page.getByTestId('tab-graph').click();
+  if (darkEditor) {
+    // the editor is themed from the same tokens rather than from vs-dark
+    await expect.poll(() => bg('.monaco-editor .monaco-editor-background')).not.toBe(darkEditor);
+  }
+
+  // back to dark, so the rest of the suite sees what it expects
+  await pick('dark');
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+});
+
 test('the control panel carries decisions and questions, and the routine says what to do next', async () => {
   const url = 'http://127.0.0.1:7411/mcp';
   const call = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
@@ -1209,11 +1279,25 @@ test('multiple sessions share one gateway with stable per-project routing', asyn
 
 test('detects an agent in the terminal, attributes its changes, logs its commands', async () => {
   test.setTimeout(120_000);
-  // fake agent: a claude.cmd that stays alive for a while
-  write('claude.cmd', '@echo off\r\nnode -e "setTimeout(function(){}, 25000)"\r\n');
+  /*
+   * A fake agent: something called `claude` that stays alive for a while.
+   *
+   * Written per platform because the detection being tested is itself per
+   * platform — a `.cmd` is not executable on Linux or macOS, so this test used
+   * to pass on Windows and silently prove nothing anywhere else. It is the
+   * unix branch (`ps`) that has the least coverage, so it is the one most
+   * worth actually running.
+   */
+  const windows = process.platform === 'win32';
+  const agent = windows
+    ? { file: 'claude.cmd', body: '@echo off\r\nnode -e "setTimeout(function(){}, 25000)"\r\n', run: '.\\claude.cmd' }
+    : { file: 'claude', body: '#!/bin/sh\nnode -e "setTimeout(function(){}, 25000)"\n', run: './claude' };
+  write(agent.file, agent.body);
+  if (!windows) fs.chmodSync(path.join(fixture, agent.file), 0o755);
+
   const panel = page.getByTestId('terminal-panel');
   await panel.locator('.terminal-body').click();
-  await page.keyboard.type('.\\claude.cmd');
+  await page.keyboard.type(agent.run);
   await page.keyboard.press('Enter');
 
   // agent badge appears on the terminal tab
@@ -1229,9 +1313,9 @@ test('detects an agent in the terminal, attributes its changes, logs its command
   await page.getByTestId('search-input').fill('');
   await expect(page.getByTestId('changed-by')).toContainText('claude', { timeout: 15_000 });
 
-  // the command log recorded the claude.cmd invocation
+  // the command log recorded the invocation, whatever it was called
   await page.getByTestId('commands-toggle').click();
-  await expect(page.getByTestId('command-log')).toContainText('claude.cmd', { timeout: 15_000 });
+  await expect(page.getByTestId('command-log')).toContainText(agent.file, { timeout: 15_000 });
   const rows = page.getByTestId('command-row');
   expect(await rows.count()).toBeGreaterThanOrEqual(1);
   await page.getByTestId('commands-toggle').click();

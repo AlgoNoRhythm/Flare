@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { makeClusterColors } from '../theme';
+import { STATUS, makeClusterColors } from '../theme';
 import { agentColor } from '../graph/lenses';
 import { buildLensContext, lensColor, type LensContext } from '../graph/lensColor';
 import { deriveRenderModel, folderLabel, parseSymbolNode, type RenderNode } from '../graph/renderModel';
@@ -216,7 +216,7 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
       clusterColor: (c) => clusterColorRef.current(c),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lens, churn, coverage, changedAt, reviewInfo, graphVersion]);
+  }, [lens, churn, coverage, changedAt, reviewInfo, graphVersion, props.theme]);
 
   useEffect(() => {
     const counts = new Map<string, number>();
@@ -683,7 +683,7 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
                         cx={leaf.x}
                         cy={leaf.y}
                         r={leaf.r + 3.5}
-                        stroke={agent && agent !== 'you' ? agentColor(agent) : '#fab219'}
+                        stroke={agent && agent !== 'you' ? agentColor(agent) : STATUS.warning}
                       />
                     )}
                     {unrev && now - (changedAt[n.id] ?? 0) < 90_000 && (

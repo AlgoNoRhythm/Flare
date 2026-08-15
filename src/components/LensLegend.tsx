@@ -1,4 +1,4 @@
-import { LENSES, ramp, type Lens } from '../graph/lenses';
+import { LENSES, lensHue, ramp, type Lens } from '../graph/lenses';
 
 interface Props {
   lens: Lens;
@@ -47,7 +47,7 @@ export function LensLegend({
             <span className="lens-scale-end">{def.scale.low}</span>
             <span className="lens-ramp">
               {RAMP_STOPS.map((stop) => (
-                <span key={stop} style={{ background: ramp(def.scale.kind === 'ramp' ? def.scale.hue : '#888', stop) }} />
+                <span key={stop} style={{ background: ramp(lensHue(def.id), stop) }} />
               ))}
             </span>
             <span className="lens-scale-end">{def.scale.high}</span>
@@ -57,7 +57,7 @@ export function LensLegend({
           <span className="lens-scale" data-testid="lens-scale">
             {def.scale.items.map((item) => (
               <span key={item.label} className="lens-swatch">
-                <span className="swatch" style={{ background: item.color }} />
+                <span className="swatch" style={{ background: item.color() }} />
                 {item.label}
               </span>
             ))}

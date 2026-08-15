@@ -262,12 +262,21 @@ the active lens, cluster bands are coloured by directory.*
 - **IDE basics** — file tree, Monaco editor (VS Code's editor) with Ctrl+S save
   and external-change reload, multiple terminals (xterm.js + node-pty) running
   real shells.
+- **Light and dark** — *View ▸ Theme*, following your desktop unless you pin
+  one. A theme is a single block of tokens in src/styles.css: the neutral
+  ramp runs surface→ink rather than dark→light, so the ~460 places the
+  stylesheet names a step do not change when a theme is added. The three
+  things that draw outside CSS — the graph, the editor and the terminal —
+  read those same tokens rather than carrying palettes of their own, and
+  tests/palette.test.ts holds the line: colours only inside a palette, none
+  in the roles, and every theme declaring the same tokens so a half-written
+  one fails loudly instead of rendering with holes in it.
 
 ## Testing
 
 ```sh
-npm test          # 366 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 74 Playwright tests: 50 driving the real Electron app, 24 driving a browser
+npm test          # 421 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
+npm run e2e       # 77 Playwright tests: 53 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 
@@ -319,15 +328,61 @@ npm start         # launch the desktop app
 
 ## Install it (Windows / macOS / Linux)
 
+Built releases are on the [releases page](https://github.com/AlgoNoRhythm/Flare/releases):
+
+| Platform | Download | Notes |
+| --- | --- | --- |
+| Windows | `Flare-<version>-Windows-x64.exe` | NSIS installer, per-user, choose your own directory. A `.zip` is there too if you would rather not install anything. |
+| macOS, Apple silicon | `Flare-<version>-macOS-arm64-beta.dmg` | **Beta** — see below. |
+| macOS, Intel | `Flare-<version>-macOS-x64-beta.dmg` | **Beta** — see below. |
+| Linux | `Flare-<version>-Linux-x86_64.AppImage` | `chmod +x` and run. A `.deb` and a `.tar.gz` are published too. |
+
+The macOS packages say **beta** in their filename for two reasons, and both
+are worth knowing before you download one. They have never run on a Mac —
+there is no Apple hardware behind this project, so CI builds them and nobody
+has opened one; Windows and Linux are both built *and* exercised, suite and
+packaged app, before a release goes out. And they are unsigned and
+un-notarised, so Gatekeeper will refuse the first launch. Open it once with
+right-click → Open, or clear the quarantine flag:
+
 ```sh
-npm run dist      # build a platform installer into release/
+xattr -dr com.apple.quarantine /Applications/Flare.app
 ```
 
-Produces an NSIS installer on Windows, dmg/zip on macOS, AppImage/deb on Linux
-(run on the target platform — electron-builder doesn't cross-compile native
-deps). `npm run dist:dir` makes an unpacked build for quick testing. The title
-bar is platform-aware: custom controls on Windows/Linux, native inset traffic
-lights on macOS.
+To build one yourself:
+
+```sh
+npm run dist      # installer for the platform you are on, into release/
+npm run dist:dir  # unpacked, for a quick look
+```
+
+Run it **on the platform you are building for**. Flare's terminal is a native
+module that ships as a prebuilt binary per platform and architecture, and npm
+installs only the one for the machine doing the installing — so a Linux package
+built on Windows contains the Windows binary and opens no terminal at all. That
+is what the release workflow's one-runner-per-platform matrix is for
+(`.github/workflows/release.yml`); tag a version and it builds all four:
+
+```sh
+npm version 0.2.0 && git push --follow-tags
+```
+
+It uploads to a **draft** release, so nothing is public until the artifacts are
+all there and someone has looked at them. The title bar is platform-aware:
+custom controls on Windows/Linux, native inset traffic lights on macOS.
+
+On Windows, WSL2 is enough to test the Linux build properly: WSLg supplies a
+display, so the desktop suite runs against real Electron and the AppImage
+actually boots. Work inside the WSL filesystem rather than `/mnt/c` — `npm ci`
+against the Windows tree from Linux replaces `node_modules` with Linux
+binaries and breaks the Windows checkout.
+
+```sh
+cp -r /mnt/c/path/to/Flare ~/flare && cd ~/flare && npm ci
+npx playwright install chromium
+npm test && npx playwright test            # 421 unit + 77 e2e, on Linux
+npx electron-builder --linux --publish never
+```
 
 Development mode (hot reload for the renderer):
 

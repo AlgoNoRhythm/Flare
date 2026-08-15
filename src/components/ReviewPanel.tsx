@@ -15,7 +15,7 @@ import {
 import type { ShadowSnapshot } from '../../shared/types';
 import { shortenCommand } from '../../shared/commands';
 import type { ReviewInfo } from '../api';
-import { UI_STATUS } from '../theme';
+import { UI_STATUS, info } from '../theme';
 import { agentColor } from '../graph/lenses';
 
 /**
@@ -58,7 +58,11 @@ const VERIFY_TONE: Record<VerificationState, 'good' | 'warn' | 'crit' | 'muted'>
 };
 
 const SEV_ICON = { critical: '●', warning: '⚠︎', info: 'ℹ︎' } as const;
-const SEV_COLOR = { critical: UI_STATUS.critical, warning: UI_STATUS.warning, info: '#86b6ef' } as const;
+/** Resolved per render: a module-level hex keeps whichever theme loaded first. */
+function sevColor(severity: 'critical' | 'warning' | 'info'): string {
+  if (severity === 'critical') return UI_STATUS.critical;
+  return severity === 'warning' ? UI_STATUS.warning : info();
+}
 
 interface Row {
   path: string;
@@ -299,12 +303,12 @@ export function ReviewPanel({
                 </span>
                 {!open &&
                   burst.smells.map((s) => (
-                    <span key={s.rule} className="smell-chip" style={{ color: SEV_COLOR[s.severity] }} title={s.title}>
+                    <span key={s.rule} className="smell-chip" style={{ color: sevColor(s.severity) }} title={s.title}>
                       {SEV_ICON[s.severity]} {s.rule}
                     </span>
                   ))}
                 {open && burst.smells.length > 0 && (
-                  <span className="smell-chip" style={{ color: SEV_COLOR[burst.smells[0].severity] }}>
+                  <span className="smell-chip" style={{ color: sevColor(burst.smells[0].severity) }}>
                     {burst.smells.length} smell{burst.smells.length === 1 ? '' : 's'}
                   </span>
                 )}
@@ -386,7 +390,7 @@ export function ReviewPanel({
                       {burst.smells.map((smell) => (
                         <details key={smell.rule} className="smell" data-testid={`smell-${smell.rule}`}>
                           <summary>
-                            <span className="smell-title" style={{ color: SEV_COLOR[smell.severity] }}>
+                            <span className="smell-title" style={{ color: sevColor(smell.severity) }}>
                               {SEV_ICON[smell.severity]} {smell.title}
                             </span>
                             <span className="smell-count">

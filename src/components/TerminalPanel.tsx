@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { agentColor } from '../graph/lenses';
+import { onThemeChange } from '../theme';
 import { McpConnect } from './McpConnect';
 import type { CommandLogEntry } from '../../shared/types';
 import { KIND_LABEL, shortenCommand, type CommandKind } from '../../shared/commands';
@@ -59,6 +60,30 @@ const KIND_HINT: Record<CommandKind, string> = {
   read: 'Reads only',
 };
 
+/**
+ * The terminal wears the app's own colours.
+ *
+ * Read from the stylesheet rather than restated here: the cursor is the brand
+ * orange, and the selection is warm rather than the stock editor blue that
+ * belonged to nothing in this app.
+ */
+function terminalTheme(): { background: string; foreground: string; cursor: string; cursorAccent: string; selectionBackground: string; selectionForeground: string } {
+  const read = (name: string, fallback: string): string => {
+    if (typeof document === 'undefined') return fallback;
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value === '' ? fallback : value;
+  };
+  const background = read('--n0', '#0c0e11');
+  return {
+    background,
+    foreground: read('--n12', '#dfe2e8'),
+    cursor: read('--accent', '#e08a52'),
+    cursorAccent: background,
+    selectionBackground: read('--accent-bg-strong', '#4a2c1b'),
+    selectionForeground: read('--accent-pale', '#f7d6bf'),
+  };
+}
+
 export function TerminalPanel({
   projectRoot,
   height,
@@ -82,6 +107,20 @@ export function TerminalPanel({
   const [termIds, setTermIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  /*
+   * xterm paints to a canvas of its own, so it is one of the three things in
+   * the app that a stylesheet cannot reach. Repainting open terminals is a
+   * matter of handing each one a new theme object — the scrollback is
+   * untouched, so a switch mid-session does not cost you what is on screen.
+   */
+  useEffect(
+    () =>
+      onThemeChange(() => {
+        for (const inst of termsRef.current.values()) inst.term.options.theme = terminalTheme();
+      }),
+    [],
+  );
+
   const createTerminal = (cwd?: string) => {
     const body = bodyRef.current;
     if (!body) return;
@@ -98,17 +137,7 @@ export function TerminalPanel({
       // through to Courier on macOS and to whatever Fontconfig picked on Linux
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Cascadia Mono", "Liberation Mono", "DejaVu Sans Mono", monospace',
       fontSize: 13,
-      theme: {
-        // the terminal is the app's own surface, so it wears the app's colours:
-        // the cursor is the brand orange, and the selection is warm rather than
-        // the stock editor blue that belonged to nothing here
-        background: '#0c0e11',
-        foreground: '#dfe2e8',
-        cursor: '#e08a52',
-        cursorAccent: '#0c0e11',
-        selectionBackground: '#4a2c1b',
-        selectionForeground: '#f7d6bf',
-      },
+      theme: terminalTheme(),
       allowProposedApi: true,
       scrollback: 8000,
     });
