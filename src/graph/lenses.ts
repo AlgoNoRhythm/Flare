@@ -45,7 +45,7 @@ export const LENSES: LensDef[] = [
     label: 'Activity',
     hint: 'What has been touched, and in what order?',
     reading:
-      'The session’s changes in order — the brightest file was written last. It stays put once the edits stop, so you can still see what happened an hour later.',
+      'The session’s changes in order — the brightest file was written last. It stays put once the edits stop, so you can still see what happened an hour later. The dot on a changed file is the agent that wrote it; a dot split into two colours means two agents both did, and a dashed amber import means one of them changed something the other was building on.',
     scale: { kind: 'ramp', low: 'earlier', high: 'latest' },
   },
   {

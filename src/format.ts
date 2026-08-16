@@ -40,6 +40,21 @@ export function ago(time: number): string {
 }
 
 /**
+ * "22:10" / "Tue 22:10" — a clock time, not an elapsed one.
+ *
+ * The opposite call to `ago`, and deliberately: elapsed time answers "did that
+ * happen while I was looking at this?", which is a question about *this*
+ * session. "Since when" is a question about a session you were not in, and
+ * "since 14h ago" is arithmetic where "since 22:10" is a memory of leaving.
+ */
+export function when(time: number, now = Date.now()): string {
+  const then = new Date(time);
+  const clock = then.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const sameDay = new Date(now).toDateString() === then.toDateString();
+  return sameDay ? clock : `${then.toLocaleDateString([], { weekday: 'short' })} ${clock}`;
+}
+
+/**
  * Where `value` sits in `values`, 0..1. Used to turn a raw metric into a
  * statement about this repo: 131 means nothing, "higher than 94% of files
  * here" means something.

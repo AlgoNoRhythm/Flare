@@ -7,6 +7,12 @@ import {
   type DecisionPolicy,
   type Routine,
 } from '../../shared/tasks';
+import {
+  HEARTBEAT_DEFAULT_MS,
+  HEARTBEAT_INTERVALS,
+  defaultHeartbeatCommand,
+} from '../../shared/heartbeat';
+import type { HeartbeatMode } from '../../shared/tasks';
 import { api } from '../api';
 import { toast } from './Toasts';
 
@@ -28,13 +34,17 @@ interface Props {
   board: Board;
   onChange(board: Board): void;
   onClose(): void;
+  /** this project's MCP endpoint, for the default heartbeat command */
+  mcpUrl?: string | null;
 }
 
 const DEFAULTS: Omit<Routine, 'setAt'> = {
   recheckBoard: true,
   decisions: 'flag',
   parkQuestions: true,
-  heartbeat: false,
+  heartbeat: 'off',
+  heartbeatEvery: HEARTBEAT_DEFAULT_MS,
+  heartbeatCommand: '',
   notes: '',
   text: '',
 };
@@ -47,6 +57,28 @@ const DEFAULTS: Omit<Routine, 'setAt'> = {
  * speculative in it and pays for it in idle time. The panel gets the card
  * either way — this only decides what happens while it waits.
  */
+/**
+ * The two mechanisms, in preference order.
+ *
+ * Not a preference either: the hook fires at the moment the agent stops and
+ * costs nothing until then, while the timer polls and types into a live shell.
+ * The timer exists only because not every agent has a hook to answer.
+ */
+const HEARTBEAT_MODES: { id: Exclude<HeartbeatMode, 'off'>; title: string; detail: string }[] = [
+  {
+    id: 'stop-hook',
+    title: 'Answer its stop hook with the board',
+    detail:
+      'A session that tries to end while a card is workable is handed that card instead, by name. Adds a Stop hook to .claude/settings.local.json — local to this machine, not committed. Needs curl on the PATH, and an assistant that has stop hooks.',
+  },
+  {
+    id: 'timer',
+    title: 'Prompt a quiet terminal on a timer',
+    detail:
+      'For agents with no stop hook. When a terminal that was running one goes quiet, the line below is typed into it — only ever a terminal an agent has already used, never a shell you are working in.',
+  },
+];
+
 const POLICIES: { id: Exclude<DecisionPolicy, 'off'>; title: string; detail: string }[] = [
   {
     id: 'flag',
@@ -62,11 +94,22 @@ const POLICIES: { id: Exclude<DecisionPolicy, 'off'>; title: string; detail: str
   },
 ];
 
-export function RoutineWizard({ board, onChange, onClose }: Props) {
+export function RoutineWizard({ board, onChange, onClose, mcpUrl = null }: Props) {
   const [step, setStep] = useState<1 | 2>(1);
   const [draft, setDraft] = useState<Omit<Routine, 'setAt'>>(() => {
-    const { recheckBoard, decisions, parkQuestions, heartbeat, notes, text } = board.routine ?? DEFAULTS;
-    return { recheckBoard, decisions, parkQuestions, heartbeat, notes, text };
+    const r = board.routine ?? DEFAULTS;
+    return {
+      recheckBoard: r.recheckBoard,
+      decisions: r.decisions,
+      parkQuestions: r.parkQuestions,
+      heartbeat: r.heartbeat,
+      heartbeatEvery: r.heartbeatEvery,
+      // the endpoint is only known once the project is open, so the wizard is
+      // where a blank command finally gets one
+      heartbeatCommand: r.heartbeatCommand || defaultHeartbeatCommand(mcpUrl),
+      notes: r.notes,
+      text: r.text,
+    };
   });
 
   const latest = useRef(onClose);
@@ -100,7 +143,7 @@ export function RoutineWizard({ board, onChange, onClose }: Props) {
   };
 
   const toggle = (
-    key: 'recheckBoard' | 'parkQuestions' | 'heartbeat',
+    key: 'recheckBoard' | 'parkQuestions',
     title: string,
     detail: string,
   ) => (
@@ -128,8 +171,14 @@ export function RoutineWizard({ board, onChange, onClose }: Props) {
       >
         <h2>When the assistant runs out of work</h2>
 
+        {/*
+          The scroll lives on the body, not the dialog: the title stays put and
+          Review it / Save stay pinned, because on a short window they were off
+          the bottom of the screen with nothing to scroll — the routine could be
+          started and never finished. Same shape as .tm-body in TaskModal.
+        */}
         {step === 1 ? (
-          <>
+          <div className="routine-body">
             <p className="muted">
               These become the working agreement for this project. Your agent reads them back over
               MCP with <code>working_agreement</code>, so they survive the chat window they were
@@ -193,11 +242,83 @@ export function RoutineWizard({ board, onChange, onClose }: Props) {
               hour into a session; this is a hook, and it fires whether or not
               anything was remembered.
             */}
-            {toggle(
-              'heartbeat',
-              'Check the board when it tries to stop',
-              'Flare answers your assistant’s stop hook with the state of the board: if a card is still workable it gets handed back with the card named, instead of the session ending. Adds a Stop hook to .claude/settings.local.json — local to this machine, not committed. Needs curl on the PATH.',
-            )}
+            {/*
+              The heartbeat: one setting, three values, so "both mechanisms on"
+              is not a state anyone can reach. The hook is listed first because
+              it is strictly better where it is available — it fires at the
+              moment that matters, polls nothing, and never types into a shell
+              you might be using.
+            */}
+            <div className="routine-rule stack" data-testid="routine-heartbeat">
+              <label className="routine-rule-head">
+                <input
+                  type="checkbox"
+                  checked={draft.heartbeat !== 'off'}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, heartbeat: e.target.checked ? 'stop-hook' : 'off' }))
+                  }
+                  data-testid="routine-heartbeat-on"
+                />
+                <span>
+                  <b>Keep it working when it would have stopped</b>
+                  <span className="sub">
+                    The one rule that does not rely on the agent having read the others. Everything
+                    above is prose it may or may not act on an hour into a session; this fires
+                    whether or not anything was remembered.
+                  </span>
+                </span>
+              </label>
+              {draft.heartbeat !== 'off' && (
+                <div className="routine-choice" role="radiogroup" aria-label="How to keep it working">
+                  {HEARTBEAT_MODES.map((m) => (
+                    <label
+                      key={m.id}
+                      className={`routine-option${draft.heartbeat === m.id ? ' active' : ''}`}
+                      data-testid={`routine-heartbeat-${m.id}`}
+                    >
+                      <input
+                        type="radio"
+                        name="heartbeat-mode"
+                        checked={draft.heartbeat === m.id}
+                        onChange={() => setDraft((d) => ({ ...d, heartbeat: m.id }))}
+                      />
+                      <span>
+                        <b>{m.title}</b>
+                        <span className="sub">{m.detail}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {draft.heartbeat === 'timer' && (
+                <div className="routine-timer" data-testid="routine-heartbeat-timer">
+                  <label>
+                    <span className="sub">Quiet for</span>
+                    <select
+                      value={draft.heartbeatEvery}
+                      onChange={(e) => setDraft((d) => ({ ...d, heartbeatEvery: Number(e.target.value) }))}
+                      data-testid="routine-heartbeat-every"
+                    >
+                      {HEARTBEAT_INTERVALS.map((i) => (
+                        <option key={i.ms} value={i.ms}>
+                          {i.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grow">
+                    <span className="sub">then send</span>
+                    <input
+                      className="mono"
+                      value={draft.heartbeatCommand}
+                      placeholder="Pick up available tasks from …"
+                      onChange={(e) => setDraft((d) => ({ ...d, heartbeatCommand: e.target.value }))}
+                      data-testid="routine-heartbeat-command"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
 
             <label className="routine-notes">
               <span>House rules (optional)</span>
@@ -209,19 +330,9 @@ export function RoutineWizard({ board, onChange, onClose }: Props) {
                 rows={4}
               />
             </label>
-
-            <div className="modal-actions">
-              <span className="spacer" />
-              <button className="btn" onClick={onClose}>
-                Cancel
-              </button>
-              <button className="btn primary" onClick={() => setStep(2)} data-testid="routine-next">
-                Review it →
-              </button>
-            </div>
-          </>
+          </div>
         ) : (
-          <>
+          <div className="routine-body">
             <p className="muted">
               This is what the agent reads, and you can rewrite it.{' '}
               {edited ? (
@@ -255,37 +366,50 @@ export function RoutineWizard({ board, onChange, onClose }: Props) {
               <summary>Flare appends the state of the board to this</summary>
               <pre>{preview.slice(preview.indexOf('## Right now'))}</pre>
             </details>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setStep(1)} data-testid="routine-back">
-                ← Back
-              </button>
-              {edited && (
-                <button
-                  className="btn"
-                  title="Throw away the edits and go back to the text the switches generate"
-                  onClick={() => setDraft((d) => ({ ...d, text: '' }))}
-                  data-testid="routine-reset"
-                >
-                  Reset to generated
-                </button>
-              )}
-              <span className="spacer" />
+          </div>
+        )}
+
+        {step === 1 ? (
+          <div className="modal-actions">
+            <span className="spacer" />
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" onClick={() => setStep(2)} data-testid="routine-next">
+              Review it →
+            </button>
+          </div>
+        ) : (
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setStep(1)} data-testid="routine-back">
+              ← Back
+            </button>
+            {edited && (
               <button
                 className="btn"
-                title="Paste it into an agent that cannot reach MCP"
-                onClick={() => {
-                  void api.clipboardWrite(preview);
-                  toast('Working agreement copied', 'success');
-                }}
-                data-testid="routine-copy"
+                title="Throw away the edits and go back to the text the switches generate"
+                onClick={() => setDraft((d) => ({ ...d, text: '' }))}
+                data-testid="routine-reset"
               >
-                Copy for agent
+                Reset to generated
               </button>
-              <button className="btn primary" onClick={save} data-testid="routine-save">
-                Save routine
-              </button>
-            </div>
-          </>
+            )}
+            <span className="spacer" />
+            <button
+              className="btn"
+              title="Paste it into an agent that cannot reach MCP"
+              onClick={() => {
+                void api.clipboardWrite(preview);
+                toast('Working agreement copied', 'success');
+              }}
+              data-testid="routine-copy"
+            >
+              Copy for agent
+            </button>
+            <button className="btn primary" onClick={save} data-testid="routine-save">
+              Save routine
+            </button>
+          </div>
         )}
       </div>
     </div>

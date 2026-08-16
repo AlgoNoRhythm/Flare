@@ -8,6 +8,7 @@ import { onThemeChange } from '../theme';
 import { McpConnect } from './McpConnect';
 import type { CommandLogEntry } from '../../shared/types';
 import { KIND_LABEL, shortenCommand, type CommandKind } from '../../shared/commands';
+import { dueForHeartbeat, heartbeatState, type HeartbeatRoutine } from '../../shared/heartbeat';
 
 interface TermInstance {
   id: string;
@@ -50,6 +51,16 @@ interface Props {
   openAt?: { dir: string; nonce: number } | null;
   /** the MCP endpoint agents in these terminals should be pointed at */
   mcp?: { port: number; slug: string | null };
+  /**
+   * The project's heartbeat, straight off the routine.
+   *
+   * Read-only here: this bar *shows* what is set and offers the way to set it,
+   * but the setting itself lives in the Routine, which is one place rather
+   * than two that have to agree.
+   */
+  heartbeat?: HeartbeatRoutine | null;
+  /** open the Routine wizard — where the heartbeat is actually set */
+  onOpenRoutine?(): void;
 }
 
 const KIND_HINT: Record<CommandKind, string> = {
@@ -91,6 +102,8 @@ export function TerminalPanel({
   commands = [],
   openAt = null,
   mcp,
+  heartbeat = null,
+  onOpenRoutine,
 }: Props) {
   const [kindFilter, setKindFilter] = useState<CommandKind | null>(null);
   const [showCommands, setShowCommands] = useState(false);
@@ -106,6 +119,56 @@ export function TerminalPanel({
   const termsRef = useRef<Map<string, TermInstance>>(new Map());
   const [termIds, setTermIds] = useState<string[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  /*
+   * The heartbeat's timer half: when a terminal that was running an agent goes
+   * quiet, type the chosen line into it.
+   *
+   * Both timestamps are refs rather than state because neither should cause a
+   * render — the terminal is a canvas, and re-rendering the panel around it on
+   * every tick would be a lot of work to change nothing on screen.
+   */
+  const agentSeenAt = useRef<Record<string, number>>({});
+  const promptedAt = useRef<Record<string, number>>({});
+  const heartbeatRef = useRef(heartbeat);
+  heartbeatRef.current = heartbeat;
+  const agentsRef = useRef(agents);
+  agentsRef.current = agents;
+
+  const beat = heartbeatState(heartbeat);
+
+  useEffect(() => {
+    const now = Date.now();
+    for (const [id, agent] of Object.entries(agents)) {
+      if (agent) agentSeenAt.current[id] = now;
+    }
+  }, [agents]);
+
+  useEffect(() => {
+    if (heartbeat?.heartbeat !== 'timer') return;
+    const tick = (): void => {
+      const due = dueForHeartbeat({
+        // read live, not closed over: the routine can change while this timer
+        // is already running, and switching to the hook has to take effect at
+        // that moment rather than at the next mount
+        routine: heartbeatRef.current,
+        terminals: [...termsRef.current.keys()],
+        agents: agentsRef.current,
+        agentSeenAt: agentSeenAt.current,
+        promptedAt: promptedAt.current,
+        now: Date.now(),
+      });
+      for (const id of due) {
+        promptedAt.current[id] = Date.now();
+        // the newline is what submits it — an agent's prompt reads a line
+        api.ptyWrite(id, `${heartbeatRef.current?.heartbeatCommand ?? ''}\r`);
+      }
+    };
+    // a minute is fine: the interval being waited out is measured in tens of
+    // them, and this only reads two maps
+    const timer = setInterval(tick, 60_000);
+    return () => clearInterval(timer);
+  }, [heartbeat?.heartbeat]);
 
   /*
    * xterm paints to a canvas of its own, so it is one of the three things in
@@ -383,6 +446,7 @@ export function TerminalPanel({
           <span>▤ Commands</span>
           {commands.length > 0 && <span className="muted">{commands.length}</span>}
         </div>
+
         {showCommands ? (
           <div className="cmd-filters">
             {([null, 'destructive', 'verify', 'network', 'write', 'read'] as const).map((k) => {
@@ -402,6 +466,31 @@ export function TerminalPanel({
           </div>
         ) : (
           <>
+            {/*
+              What happens when that agent stops, beside where you start one.
+
+              A status, not an editor: it says what is set and takes you to the
+              Routine, which is the one place it is set. A second control here
+              writing a second field is exactly what made this hard to find.
+
+              Left of the connect affordance rather than right of it, because
+              the risk-alert stack floats over the bottom-right corner and
+              anything pushed that far along the bar stops being clickable.
+            */}
+            {onOpenRoutine && (
+              <button
+                className={`btn hb-chip${beat.mode === 'off' ? '' : ' on'}`}
+                title={`${beat.detail}
+
+Click to change it in the Routine.`}
+                onClick={onOpenRoutine}
+                data-testid="heartbeat-chip"
+              >
+                <span data-testid="heartbeat-label">
+                  {beat.mode === 'off' ? '♡' : '♥'} {beat.label}
+                </span>
+              </button>
+            )}
             <span className="muted" style={{ marginLeft: 10, fontSize: 11 }}>
               run your agent here — claude · codex · opencode
             </span>

@@ -105,6 +105,9 @@ export interface Question {
  */
 export type DecisionPolicy = 'off' | 'flag' | 'park';
 
+/** See `Routine.heartbeat` — one setting, so "both on" is unrepresentable. */
+export type HeartbeatMode = 'off' | 'stop-hook' | 'timer';
+
 export interface Routine {
   /** look at the board again instead of stopping when the queue empties */
   recheckBoard: boolean;
@@ -113,14 +116,26 @@ export interface Routine {
   /** park questions and carry on with work they do not block */
   parkQuestions: boolean;
   /**
-   * Check the board when the agent tries to stop.
+   * What keeps an agent working after it would have stopped.
    *
    * The rules above are things an agent has to remember to do; this is the one
-   * that does not depend on it remembering. Flare answers its stop hook with
-   * the state of the board, so "look again before you stop" is enforced at the
-   * moment it is usually forgotten.
+   * that does not depend on it remembering. One setting with three values
+   * rather than two independent switches, because the two mechanisms must
+   * never both run — an agent answered by its hook *and* typed at by a timer
+   * is told to pick up work twice — and an enum cannot express that state at
+   * all, where two booleans can.
+   *
+   * - `stop-hook` — Flare answers the assistant's stop hook with the board.
+   *   The better mechanism: it fires at the moment that matters, polls
+   *   nothing, and never types into a shell you might be using.
+   * - `timer` — for agents with no such hook: a terminal that was running one
+   *   and has gone quiet gets `heartbeatCommand` typed into it.
    */
-  heartbeat: boolean;
+  heartbeat: HeartbeatMode;
+  /** timer mode: how long a terminal must be quiet first */
+  heartbeatEvery: number;
+  /** timer mode: the line typed into it, without the newline */
+  heartbeatCommand: string;
   /** house rules typed into the wizard, verbatim */
   notes: string;
   /**
@@ -203,7 +218,7 @@ export function normalizeBoard(raw: unknown): Board {
  */
 function normalizeRoutine(raw: unknown): Routine | null {
   if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Partial<Routine> & { flagDecisions?: boolean };
+  const r = raw as Omit<Partial<Routine>, 'heartbeat'> & { flagDecisions?: boolean; heartbeat?: unknown };
   const decisions: DecisionPolicy =
     r.decisions === 'off' || r.decisions === 'flag' || r.decisions === 'park'
       ? r.decisions
@@ -214,9 +229,18 @@ function normalizeRoutine(raw: unknown): Routine | null {
     recheckBoard: r.recheckBoard !== false,
     decisions,
     parkQuestions: r.parkQuestions !== false,
-    // opt-in, unlike the rest: it is the only rule that writes a file into the
-    // project, so it is never on because a board was loaded from an older build
-    heartbeat: r.heartbeat === true,
+    // opt-in, unlike the rest: the hook writes a file into the project and the
+    // timer types into a shell, so neither is ever on because a board was
+    // loaded from an older build. `true` was the stop hook before this was an
+    // enum, which is the only value an older board can carry.
+    heartbeat:
+      r.heartbeat === true || r.heartbeat === 'stop-hook'
+        ? 'stop-hook'
+        : r.heartbeat === 'timer'
+          ? 'timer'
+          : 'off',
+    heartbeatEvery: typeof r.heartbeatEvery === 'number' && r.heartbeatEvery > 0 ? r.heartbeatEvery : 600_000,
+    heartbeatCommand: typeof r.heartbeatCommand === 'string' ? r.heartbeatCommand : '',
     notes: typeof r.notes === 'string' ? r.notes : '',
     text: typeof r.text === 'string' ? r.text : '',
     setAt: typeof r.setAt === 'number' ? r.setAt : 0,
@@ -609,6 +633,27 @@ export interface NextStep {
   proposedDecisions: Decision[];
 }
 
+/**
+ * Cards somebody has started: workable, out of the queue, not yet in review.
+ *
+ * Moving a card out of the first lane is how an agent claims it, so this is
+ * the set of work currently owned by *someone* — which is also how a write to
+ * one of their files gets attributed to them. See shared/attribution.ts.
+ */
+export function claimedTasks(board: Board): Task[] {
+  const doneLane = board.lanes[board.lanes.length - 1]?.id;
+  const reviewLane = board.lanes.length >= 2 ? board.lanes[board.lanes.length - 2]?.id : undefined;
+  const queueLane = board.lanes[0]?.id;
+  const blockedIds = blockedTaskIds(board);
+  return board.tasks.filter(
+    (t) =>
+      t.laneId !== doneLane &&
+      t.laneId !== reviewLane &&
+      t.laneId !== queueLane &&
+      !blockedIds.has(t.id),
+  );
+}
+
 export function nextStep(board: Board): NextStep {
   const blockedIds = blockedTaskIds(board);
   const doneLane = board.lanes[board.lanes.length - 1]?.id;
@@ -617,7 +662,7 @@ export function nextStep(board: Board): NextStep {
   const live = board.tasks.filter((t) => t.laneId !== doneLane && t.laneId !== reviewLane);
   const workable = live.filter((t) => !blockedIds.has(t.id));
   const queued = workable.filter((t) => t.laneId === queueLane);
-  const claimed = workable.filter((t) => t.laneId !== queueLane);
+  const claimed = claimedTasks(board);
   const blocked = live.filter((t) => blockedIds.has(t.id));
   const questions = openQuestions(board);
   const proposed = proposedDecisions(board);
@@ -748,7 +793,7 @@ export function routineRules(routine: Routine): string {
     );
   }
   out.push(`${++n}. Call \`working_agreement\` whenever you are unsure what to pick up — it answers with the board as it stands.`);
-  if (routine.heartbeat) {
+  if (routine.heartbeat === 'stop-hook') {
     out.push(
       '',
       'This project also checks the board when you try to stop: if a card is sitting unstarted you will be handed it instead of being allowed to finish. Calling `tasks_list` yourself first is quicker than being sent back. Cards already in progress are never handed out this way, so if yours is one of them, move it on rather than leaving it parked there.',

@@ -1,5 +1,6 @@
 import type { ChangeBurst } from './activity';
 import { reviewTier, uncovered, type TierInput } from './review';
+import { agentLabelOf } from './conflicts';
 
 /**
  * Which changes are worth interrupting someone for.
@@ -106,7 +107,9 @@ export function riskAlerts(input: RiskAlertInput): RiskAlert[] {
         path,
         burstId: burst.id,
         at: burst.endedAt,
-        agent: burst.agent,
+        // the label, so a card, its burst row and its tick all name the same
+        // author rather than three different ones
+        agent: agentLabelOf(burst),
         reasons,
         risk: m.risk,
         startedAt: burst.startedAt,

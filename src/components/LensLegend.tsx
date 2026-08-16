@@ -41,7 +41,29 @@ export function LensLegend({
     <>
       <div className={`lens-reading${emptyNote ? ' quiet' : ''}`} data-testid="lens-reading">
         <span className="lens-reading-name">{def.label}</span>
-        <span className="lens-reading-text">{emptyNote ?? def.reading}</span>
+        {/*
+          The explanation is behind the ⓘ, not printed here.
+
+          Reading what a lens means is a once-per-lens act; reading the colours
+          is continuous. Spending three lines of the strip on the first pushed
+          the second — the thing you actually consult — around and made the bar
+          above the graph tall enough to be chrome. `emptyNote` stays inline
+          because it is not an explanation: it says this lens has nothing to
+          colour, which is about the repo in front of you rather than about the
+          lens, and hiding it would leave a legend with no scale and no reason.
+        */}
+        {emptyNote && <span className="lens-reading-text">{emptyNote}</span>}
+        <button
+          className="lens-info"
+          aria-label={`What ${def.label} colours mean`}
+          data-testid="lens-info"
+        >
+          ⓘ
+          <span className="lens-info-pop" role="tooltip">
+            <b>{def.hint}</b>
+            {def.reading}
+          </span>
+        </button>
         {!emptyNote && def.scale.kind === 'ramp' && (
           <span className="lens-scale" data-testid="lens-scale">
             <span className="lens-scale-end">{def.scale.low}</span>

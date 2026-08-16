@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ProjectSession } from '../electron/session';
-import { McpServer } from '../electron/services/mcp';
+import { McpServer, identify } from '../electron/services/mcp';
 import { McpRegistry } from '../electron/services/mcpRegistry';
 import { SlugBook } from '../electron/services/slugs';
 import {
@@ -30,7 +30,9 @@ const ROUTINE: Omit<Routine, 'setAt'> = {
   recheckBoard: true,
   decisions: 'flag',
   parkQuestions: true,
-  heartbeat: true,
+  heartbeat: 'stop-hook' as const,
+  heartbeatEvery: 600_000,
+  heartbeatCommand: '',
   notes: '',
   text: '',
 };
@@ -42,8 +44,13 @@ const ROUTINE: Omit<Routine, 'setAt'> = {
  * none of that is what these routes do. What they do is read and write a
  * board, so that is what this is.
  */
-function fakeSession(board: Board): { session: ProjectSession; board: () => Board } {
+function fakeSession(board: Board): {
+  session: ProjectSession;
+  board: () => Board;
+  claimed: Map<string, string>;
+} {
   let current = board;
+  const claimed = new Map<string, string>();
   const session = {
     root: '/tmp/project',
     getBoard: () => current,
@@ -51,8 +58,12 @@ function fakeSession(board: Board): { session: ProjectSession; board: () => Boar
       current = next;
     },
     formatTask: (id: string) => current.tasks.find((t) => t.id === id)?.title ?? null,
+    /** claiming a card is how an MCP session tells Flare what to call it */
+    noteClaim: (callerId: string | null, title: string) => {
+      if (callerId) claimed.set(callerId, title);
+    },
   };
-  return { session: session as unknown as ProjectSession, board: () => current };
+  return { session: session as unknown as ProjectSession, board: () => current, claimed };
 }
 
 let dir = '';
@@ -212,8 +223,23 @@ describe('the stop-hook endpoint', () => {
   it('says nothing when the project has no heartbeat set', async () => {
     await serve(withWork());
     expect(await stopHook()).not.toHaveProperty('decision');
-    await serve(withWork({ ...ROUTINE, heartbeat: false }));
+    await serve(withWork({ ...ROUTINE, heartbeat: 'off' as const }));
     expect(await stopHook()).not.toHaveProperty('decision');
+  });
+
+  /*
+   * The mode is a string, and every value of it is truthy.
+   *
+   * This blocked real sessions the moment the flag stopped being a boolean:
+   * `!routine.heartbeat` reads as "no heartbeat is set" and is false for
+   * 'off'. The timer mode is the same trap wearing a different value, so it
+   * is asserted rather than left to the next person to rediscover.
+   */
+  it('answers only to the stop-hook mode, not to any mode at all', async () => {
+    await serve(withWork({ ...ROUTINE, heartbeat: 'timer' as const }));
+    expect(await stopHook()).not.toHaveProperty('decision');
+    await serve(withWork({ ...ROUTINE, heartbeat: 'stop-hook' as const }));
+    expect(await stopHook()).toHaveProperty('decision', 'block');
   });
 
   /*
@@ -255,5 +281,43 @@ describe('the stop-hook endpoint', () => {
     await serve(withWork(ROUTINE));
     const res = await fetch(`http://127.0.0.1:${port}/hook/stopping`);
     expect(res.status).toBe(405);
+  });
+});
+
+describe('identifying the caller', () => {
+  /*
+   * The one handle that separates two agents. A process list cannot (two
+   * `claude` sessions look identical) and the board cannot (it attributes by
+   * path, so an agent editing someone else's file is recorded as them).
+   */
+  const init = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+  const call = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'issues' } });
+
+  it('mints an id on initialize and hands it back', () => {
+    const { caller, minted } = identify({ headers: {} }, init);
+    expect(minted).toBeTruthy();
+    expect(caller.id).toBe(minted);
+  });
+
+  it('gives two clients two identities', () => {
+    const a = identify({ headers: {} }, init).minted;
+    const b = identify({ headers: {} }, init).minted;
+    expect(a).not.toBe(b);
+  });
+
+  it('recognises a client that echoes the header back', () => {
+    const { caller, minted } = identify({ headers: { 'mcp-session-id': 'abc' } }, call);
+    expect(caller.id).toBe('abc');
+    expect(minted).toBeNull(); // already had one — do not issue another
+  });
+
+  it('leaves a client that never says who it is anonymous rather than inventing one', () => {
+    const { caller, minted } = identify({ headers: {} }, call);
+    expect(caller.id).toBeNull();
+    expect(minted).toBeNull();
+  });
+
+  it('does not fall over on a malformed body', () => {
+    expect(identify({ headers: {} }, 'not json')).toEqual({ caller: { id: null }, minted: null });
   });
 });

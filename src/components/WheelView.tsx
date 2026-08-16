@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { STATUS, makeClusterColors } from '../theme';
 import { agentColor } from '../graph/lenses';
+import { conflictMarks } from '../../shared/conflicts';
 import { buildLensContext, lensColor, type LensContext } from '../graph/lensColor';
 import { deriveRenderModel, folderLabel, parseSymbolNode, type RenderNode } from '../graph/renderModel';
 import type { CanvasProps, GraphViewHandle } from './CanvasView';
@@ -67,6 +68,7 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
     collapsedDirs,
     expandedFiles,
     symbolGraphs,
+    conflicts,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -487,6 +489,7 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
 
   const query = searchQuery.trim().toLowerCase();
   const now = Date.now();
+  const { contested } = conflictMarks(conflicts ?? []);
 
   return (
     <div
@@ -677,15 +680,41 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
                     ) : (
                       <circle className="dot" cx={leaf.x} cy={leaf.y} r={leaf.r} fill={color} />
                     )}
-                    {unrev && (
-                      <circle
-                        className="ring"
-                        cx={leaf.x}
-                        cy={leaf.y}
-                        r={leaf.r + 3.5}
-                        stroke={agent && agent !== 'you' ? agentColor(agent) : STATUS.warning}
-                      />
-                    )}
+                    {/*
+                      The ring says who changed this file. When two agents both
+                      did, it is drawn as two arcs — literally two-tone — which
+                      is the one place in the app where that reads at a glance
+                      across the whole repo at once: a disc with several
+                      half-and-half rings on it is a night that needs looking at.
+                    */}
+                    {unrev &&
+                      (contested.get(n.id) ? (
+                        <g className="contested-ring">
+                          <title>
+                            {`written by ${contested.get(n.id)!.map((a) => a.label).join(' and ')}`}
+                          </title>
+                          <path
+                            className="ring"
+                            d={`M ${leaf.x - leaf.r - 3.5} ${leaf.y} A ${leaf.r + 3.5} ${leaf.r + 3.5} 0 0 1 ${leaf.x + leaf.r + 3.5} ${leaf.y}`}
+                            fill="none"
+                            stroke={agentColor(contested.get(n.id)![0].id)}
+                          />
+                          <path
+                            className="ring"
+                            d={`M ${leaf.x + leaf.r + 3.5} ${leaf.y} A ${leaf.r + 3.5} ${leaf.r + 3.5} 0 0 1 ${leaf.x - leaf.r - 3.5} ${leaf.y}`}
+                            fill="none"
+                            stroke={agentColor(contested.get(n.id)![1].id)}
+                          />
+                        </g>
+                      ) : (
+                        <circle
+                          className="ring"
+                          cx={leaf.x}
+                          cy={leaf.y}
+                          r={leaf.r + 3.5}
+                          stroke={agent && agent !== 'you' ? agentColor(agent) : STATUS.warning}
+                        />
+                      ))}
                     {unrev && now - (changedAt[n.id] ?? 0) < 90_000 && (
                       <circle className="pulsering" cx={leaf.x} cy={leaf.y} r={leaf.r + 3.5} />
                     )}

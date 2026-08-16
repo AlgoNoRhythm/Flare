@@ -14,6 +14,7 @@ import type { ReviewInfo } from '../api';
 import { api } from '../api';
 import { STATUS, makeClusterColors } from '../theme';
 import { agentColor, type Lens } from '../graph/lenses';
+import { conflictMarks, type Conflict } from '../../shared/conflicts';
 import { aggregateLens, buildLensContext, lensColor, lensValue, type LensContext } from '../graph/lensColor';
 import {
   deriveRenderModel,
@@ -73,6 +74,16 @@ export interface CanvasProps {
   expandedFiles: ReadonlySet<string>;
   symbolGraphs: ReadonlyMap<string, SymbolGraph>;
   recentChanges: { path: string; time: number; agent: string }[];
+  /**
+   * Where two agents got in each other's way.
+   *
+   * Drawn rather than listed, because both facts are already shapes on this
+   * canvas: "two agents wrote this file" is the agent dot, and "one changed
+   * something the other was building on" is the import edge between them. A
+   * crossing you can see without hovering anything is the only version of this
+   * that survives a forty-file night.
+   */
+  conflicts?: readonly Conflict[];
   onSelect(id: string | null): void;
   onToggleSelect(id: string): void;
   onBoxSelect(ids: string[]): void;
@@ -147,6 +158,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
     expandedFiles,
     symbolGraphs,
     recentChanges,
+    conflicts,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -423,10 +435,11 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
    * the top-left of the layout (which is where the foundations sit) instead of
    * centring a board that overflows in every direction.
    */
+  /** Returns whether it actually framed — false when there was nothing to measure. */
   const fitView = useCallback(
-    (readable = false) => {
+    (readable = false): boolean => {
       const container = containerRef.current;
-      if (!container || model.placed.size === 0) return;
+      if (!container || model.placed.size === 0) return false;
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
@@ -438,10 +451,40 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
         maxY = Math.max(maxY, p.y + p.h);
       }
       const rect = container.getBoundingClientRect();
-      // the toolbar overlay eats the top strip — keep content clear of it
-      const TOP = 74;
+      /*
+       * Refuse to frame against a container that has not been measured.
+       *
+       * Every number below is a ratio against this rect, so a 0×0 one yields a
+       * view computed from nothing. The graph tab is laid out long before this
+       * runs and never hits it; a canvas mounted into a panel fits on the
+       * frame it appears and can. Saying so explicitly — rather than quietly
+       * producing a garbage view that the `didInitialFit` guard would then
+       * make permanent — is what lets the measurement effect below take over.
+       */
+      if (rect.width < 2 || rect.height < 2) return false;
+      /*
+       * Measure the toolbar overlay rather than assuming its height.
+       *
+       * This was a hardcoded 74px, which was true of a one-row toolbar and
+       * false of every other: the lens switcher wraps on a narrow window and
+       * the folder chips take a row of their own, so the strip is routinely
+       * taller than the allowance and the top rank of cards ends up sitting
+       * under it. Reading the real height means framing stays clear of the
+       * bar whatever the bar is currently doing.
+       */
+      const overlay = container.querySelector('.graph-overlay');
+      const TOP = overlay ? Math.round(overlay.getBoundingClientRect().height) + 16 : 74;
+      /*
+       * The folder bar runs down the left, so it costs width the way the
+       * toolbar costs height. Measured for the same reason: it is wider with a
+       * long folder name in it and a narrow rail when collapsed, and framing
+       * against a guess just moves the nodes that end up underneath it from
+       * one edge to another.
+       */
+      const folders = container.querySelector('.legend');
+      const LEFT = folders ? Math.round(folders.getBoundingClientRect().width) + 14 : 0;
       const usableH = Math.max(120, rect.height - TOP - 16);
-      const usableW = Math.max(160, rect.width - 32);
+      const usableW = Math.max(160, rect.width - LEFT - 32);
       const spanX = maxX - minX;
       const spanY = maxY - minY;
       const raw = Math.min(usableW / (spanX + 40), usableH / (spanY + 40));
@@ -454,10 +497,11 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
       const overflowsY = spanY * k > usableH;
       viewRef.current = {
         k,
-        x: overflowsX ? 16 - minX * k : (rect.width - spanX * k) / 2 - minX * k,
+        x: overflowsX ? LEFT + 16 - minX * k : LEFT + (usableW - spanX * k) / 2 - minX * k,
         y: overflowsY ? TOP + 8 - minY * k : TOP + (usableH - spanY * k) / 2 - minY * k,
       };
       applyView();
+      return true;
     },
     [model, applyView],
   );
@@ -509,9 +553,41 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
    */
   useEffect(() => {
     if (base.derived.nodes.length === 0) return;
-    if (!userMoved.current) requestAnimationFrame(() => fitViewRef.current(true));
-    didInitialFit.current = true;
+    if (userMoved.current) {
+      didInitialFit.current = true;
+      return;
+    }
+    /*
+     * The flag follows the outcome, not the attempt.
+     *
+     * It used to be set here, outside the frame, so a fit that never happened
+     * still counted as done and nothing framed that canvas again. The graph
+     * tab is always measured by this point so it never noticed; a canvas
+     * mounted into a panel fits on the frame it appears, which is the case
+     * this distinction exists for.
+     */
+    requestAnimationFrame(() => {
+      if (fitViewRef.current(true)) didInitialFit.current = true;
+    });
   }, [base]);
+
+  /*
+   * Fit once the pane has a size, for a canvas that mounted without one.
+   *
+   * The pair with the guard in `fitView`: that one declines to frame against
+   * nothing, this one is what frames afterwards. Without it, declining would
+   * simply mean never framing at all. It runs only when the fit above did not
+   * take, so the graph tab never reaches it.
+   */
+  useEffect(() => {
+    if (didInitialFit.current || userMoved.current) return;
+    if (size.w < 2 || size.h < 2 || model.placed.size === 0) return;
+    const frame = requestAnimationFrame(() => {
+      fitViewRef.current(true);
+      didInitialFit.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [size, model]);
 
   const zoomAt = useCallback(
     (factor: number, cx?: number, cy?: number) => {
@@ -929,6 +1005,8 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
 
   const now = Date.now();
 
+  const { contested, collisions } = useMemo(() => conflictMarks(conflicts ?? []), [conflicts]);
+
   const trails = useMemo(() => {
     const cutoff = now - 4 * 60 * 1000;
     const byAgent = new Map<string, { x: number; y: number; time: number }[]>();
@@ -979,7 +1057,14 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
           {model.edges.map((e) => {
             const key = `${e.source}\n${e.target}`;
             const onPath = pathHl.current?.edges.has(key);
-            const cls = ['gedge', e.kind === 'intra' ? 'intra' : '', onPath ? 'onpath' : '', pathHl.current && !onPath ? 'faded' : '']
+            const collision = collisions.get(key);
+            const cls = [
+              'gedge',
+              e.kind === 'intra' ? 'intra' : '',
+              onPath ? 'onpath' : '',
+              collision ? 'collision' : '',
+              pathHl.current && !onPath ? 'faded' : '',
+            ]
               .filter(Boolean)
               .join(' ');
             return (
@@ -993,7 +1078,9 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                 // scale it — at rest these are structure, on hover they are
                 // the answer
                 style={{ '--w': `${Math.min(1.1, 0.5 + Math.log2(1 + e.weight) * 0.2)}px` } as React.CSSProperties}
-              />
+              >
+                {collision && <title>{collision}</title>}
+              </path>
             );
           })}
           {[...trails.entries()].map(([agent, pts]) =>
@@ -1034,6 +1121,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
           const unrev = n.kind !== 'dir' && isUnreviewed(n.id, changedAt, reviewInfo);
           const fresh = unrev && now - (changedAt[n.id] ?? 0) < 90_000;
           const agent = changedBy[n.id];
+          const contestedParties = contested.get(n.id);
           const inFocus = !focusSet || focusSet.has(n.id);
           const miss = query !== '' && !n.id.toLowerCase().includes(query);
           const classes = [
@@ -1105,8 +1193,30 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                 <>
                   <span className="gname">{n.label}</span>
                   <span className="gbadges">
-                    {agent && agent !== 'you' && unrev && (
-                      <span className="gagent" title={`changed by ${agent}`} style={{ background: agentColor(agent) }} />
+                    {/*
+                      One dot, two states. Normally it is who changed this
+                      file; when two agents both wrote it the same dot splits
+                      down the middle into both of their colours, because
+                      "contested" is a fact *about the author*, not a separate
+                      thing to badge. A card 36px tall cannot afford a second
+                      mark for it, and does not need one.
+                    */}
+                    {contestedParties ? (
+                      <span
+                        className="gagent contested"
+                        title={`written by ${contestedParties.map((a) => a.label).join(' and ')} — read the diff before keeping either`}
+                        style={{
+                          background: `linear-gradient(90deg, ${agentColor(contestedParties[0].id)} 0 50%, ${agentColor(
+                            contestedParties[1].id,
+                          )} 50% 100%)`,
+                        }}
+                      />
+                    ) : (
+                      agent &&
+                      agent !== 'you' &&
+                      unrev && (
+                        <span className="gagent" title={`changed by ${agent}`} style={{ background: agentColor(agent) }} />
+                      )
                     )}
                     {/* Every badge carries its own tooltip. They are two or three
                         characters on a 36px card, so without one "∅t" and "8⚑︎"

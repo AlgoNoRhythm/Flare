@@ -43,20 +43,20 @@ const STORAGE_KEY = 'flare.theme';
  * document to read them from.
  */
 export const CATEGORICAL = [
-  '#3987e5', // blue
-  '#d95926', // orange
-  '#199e70', // aqua
-  '#c98500', // yellow
-  '#d55181', // magenta
-  '#008300', // green
-  '#9085e9', // violet
-  '#e66767', // red
+  '#7c9fca', // blue
+  '#c78e77', // orange
+  '#69c2a3', // aqua
+  '#c3a66d', // yellow
+  '#ca7e9a', // magenta
+  '#60be60', // green
+  '#938bd0', // violet
+  '#cd8585', // red
 ];
 
 export const STATUS = {
-  good: '#0ca30c',
-  warning: '#fab219',
-  serious: '#ec835a',
+  good: '#4ac94a',
+  warning: '#d1ae64',
+  serious: '#d58d72',
   critical: '#d03b3b',
 };
 
@@ -217,9 +217,17 @@ export function watchSystemTheme(): void {
 export function storedChoice(): ThemeChoice {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === 'light' || stored === 'dark' ? stored : 'system';
+    /*
+     * Dark unless you said otherwise.
+     *
+     * This used to fall back to 'system', so the app wore whatever the desktop
+     * preferred and a light desktop never saw the palette the product is
+     * designed in. Dark is the default identity; 'system' is still a choice
+     * you can make, it is just no longer made for you.
+     */
+    return stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'dark';
   } catch {
-    return 'system';
+    return 'dark';
   }
 }
 

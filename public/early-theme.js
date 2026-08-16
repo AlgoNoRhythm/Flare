@@ -14,11 +14,14 @@
 (function () {
   try {
     var choice = localStorage.getItem('flare.theme');
+    // dark unless a choice was stored; 'system' is a choice, not the default
     var theme =
       choice === 'light' || choice === 'dark'
         ? choice
-        : window.matchMedia('(prefers-color-scheme: light)').matches
-          ? 'light'
+        : choice === 'system'
+          ? window.matchMedia('(prefers-color-scheme: light)').matches
+            ? 'light'
+            : 'dark'
           : 'dark';
     document.documentElement.dataset.theme = theme;
   } catch (e) {

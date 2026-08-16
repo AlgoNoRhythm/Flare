@@ -238,12 +238,49 @@ export interface LoggedCommand extends CommandEvent {
   agent: string | null;
 }
 
+/** One agent seen running right now, and where. */
+export interface LiveAgent {
+  terminalId: string;
+  /** the tool: 'claude', 'codex', … */
+  agent: string;
+  /** last sample it was seen in */
+  at: number;
+}
+
+/**
+ * Who a change landing now should be attributed to.
+ *
+ * `agent` is the answer the rest of the app has always had. `agentId` is the
+ * new one, and it is only filled in when we can honestly say *which* agent:
+ * process presence proves an agent is running, not that it wrote anything, so
+ * with two live sessions the monitor reports both as `live` candidates and
+ * declines to pick. Resolving that is the session's job — it holds the board,
+ * and a file named by an in-progress task is claimed by whoever claimed it.
+ */
+export interface Attribution {
+  agent: string;
+  agentId?: string;
+  /** every agent running right now — the candidates when `agentId` is absent */
+  live: LiveAgent[];
+}
+
+/** Stable, readable identity for one agent session. */
+export function agentIdFor(agent: string, terminalId: string): string {
+  return `${agent}:${terminalId}`;
+}
+
 export class AgentMonitor {
   private sampler: ProcessSampler | null = null;
   private idlePollMs = IDLE_POLL_MS;
   private lastStatus: Record<string, string | null> = {};
-  /** agent name -> last seen running (epoch ms). */
-  private lastSeen = new Map<string, number>();
+  /**
+   * terminal id -> the agent running in it and when it was last seen.
+   *
+   * Keyed by *terminal*, not by agent name: two `claude` sessions are two
+   * agents, and keying by name collapses them into one — which is the single
+   * thing that makes cross-agent conflicts undetectable.
+   */
+  private lastSeen = new Map<string, { agent: string; at: number }>();
   private seenPids = new Set<number>();
   /** pids of commands we reported, so we can also report when they finish */
   private liveCommandPids = new Set<number>();
@@ -293,8 +330,8 @@ export class AgentMonitor {
     const roots = this.getRoots();
     const status = roots.size > 0 ? detectAgents(processes, roots) : {};
     const now = Date.now();
-    for (const agent of Object.values(status)) {
-      if (agent) this.lastSeen.set(agent, now);
+    for (const [terminalId, agent] of Object.entries(status)) {
+      if (agent) this.lastSeen.set(terminalId, { agent, at: now });
     }
     if (JSON.stringify(status) !== JSON.stringify(this.lastStatus)) {
       this.lastStatus = status;
@@ -335,12 +372,28 @@ export class AgentMonitor {
 
   /** Who should a change burst landing now be attributed to? */
   attribution(): string {
+    return this.attributionDetail().agent;
+  }
+
+  /**
+   * The same answer, with the identity behind it.
+   *
+   * One agent live: we know who wrote it, and say so. Several: both are
+   * equally present in every sample — presence is not authorship — so we
+   * report `mixed` and hand the caller the candidates rather than guessing
+   * between them at a 150ms poll's resolution.
+   */
+  attributionDetail(): Attribution {
     const now = Date.now();
-    const active = [...this.lastSeen.entries()]
-      .filter(([, t]) => now - t < ACTIVE_WINDOW_MS)
-      .map(([name]) => name);
-    if (active.length === 0) return 'you';
-    if (active.length === 1) return active[0];
-    return 'mixed';
+    const live: LiveAgent[] = [...this.lastSeen.entries()]
+      .filter(([, seen]) => now - seen.at < ACTIVE_WINDOW_MS)
+      .map(([terminalId, seen]) => ({ terminalId, agent: seen.agent, at: seen.at }))
+      .sort((a, b) => b.at - a.at);
+
+    if (live.length === 0) return { agent: 'you', live };
+    if (live.length === 1) {
+      return { agent: live[0].agent, agentId: agentIdFor(live[0].agent, live[0].terminalId), live };
+    }
+    return { agent: 'mixed', live };
   }
 }

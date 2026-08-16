@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { STATUS, makeClusterColors, mixHex, panel, surface } from '../theme';
 import { agentColor } from '../graph/lenses';
+import { conflictMarks } from '../../shared/conflicts';
 import { buildLensContext, lensColor, lensValue, type LensContext } from '../graph/lensColor';
 import type { CanvasProps, GraphViewHandle } from './CanvasView';
 import type { ReviewInfo } from '../api';
@@ -104,6 +105,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
     searchQuery,
     lens,
     collapsedDirs,
+    conflicts,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -339,6 +341,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
   const query = searchQuery.trim().toLowerCase();
   const related = selected ? (model.deps.get(selected) ?? new Set<string>()) : null;
   const now = Date.now();
+  const { contested } = conflictMarks(conflicts ?? []);
 
   return (
     <div
@@ -451,10 +454,24 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
               }}
             >
               {showLabel && <span className="dtile-label">{n.id.split('/').pop()}</span>}
+              {/* same flag, split when two agents both wrote the tile */}
               {unrev && (
                 <span
                   className="dtile-flag"
-                  style={{ background: agent && agent !== 'you' ? agentColor(agent) : STATUS.warning }}
+                  title={
+                    contested.get(n.id)
+                      ? `written by ${contested.get(n.id)!.map((a) => a.label).join(' and ')}`
+                      : undefined
+                  }
+                  style={{
+                    background: contested.get(n.id)
+                      ? `linear-gradient(90deg, ${agentColor(contested.get(n.id)![0].id)} 0 50%, ${agentColor(
+                          contested.get(n.id)![1].id,
+                        )} 50% 100%)`
+                      : agent && agent !== 'you'
+                        ? agentColor(agent)
+                        : STATUS.warning,
+                  }}
                 />
               )}
             </div>

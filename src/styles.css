@@ -46,6 +46,8 @@
   --n5: #252a34;
   --n6: #2d333e;
   --n7: #383f4b;
+  /* graph edges: see the note on .gedge — this is a contrast, not a colour */
+  --edge: #383f4b;
   --n8: #4a515f;
   --n9: #656d7b;
   --n10: #828a97;
@@ -106,23 +108,36 @@
    * two places a colour could be written down and no way to keep them in step
    * except by hand. It is read from here now (see theme.ts), so a theme is
    * still one block: the categorical slots that colour directory clusters, the
-   * fully-saturated status colours a single card has to carry across a board,
-   * and the two blues the panels use for "information".
+   * status colours a single card has to carry across a board, and the two
+   * blues the panels use for "information".
+   *
+   * Hue is identity; saturation and lightness are volume, and the volume is
+   * set here rather than per colour. These were picked one at a time and drifted
+   * badly — two slots sat at 100% saturation, one green at L26 was invisible on
+   * this surface while a violet at L72 glared off it — and a palette whose
+   * members shout at different volumes is what reads as "assembled from parts".
+   * Every hue is unchanged and every pairing between the themes is exact; what
+   * changed is that the clusters now share one restrained saturation (they
+   * cover the most area, so they carry the least shout) and the signals a
+   * slightly higher one, with lightness compressed into a band that keeps their
+   * original ordering — so nothing vanishes into the background and nothing
+   * jumps out of it. The brand accent is deliberately untouched: it is the one
+   * colour that is allowed to be loud, and it stays the loudest thing here.
    */
-  --cat-1: #3987e5;
-  --cat-2: #d95926;
-  --cat-3: #199e70;
-  --cat-4: #c98500;
-  --cat-5: #d55181;
-  --cat-6: #008300;
-  --cat-7: #9085e9;
-  --cat-8: #e66767;
+  --cat-1: #7c9fca;
+  --cat-2: #c78e77;
+  --cat-3: #69c2a3;
+  --cat-4: #c3a66d;
+  --cat-5: #ca7e9a;
+  --cat-6: #60be60;
+  --cat-7: #938bd0;
+  --cat-8: #cd8585;
   --cat-neutral: #8a8f98;
 
-  --sig-good: #0ca30c;
-  --sig-warn: #fab219;
-  --sig-serious: #ec835a;
-  --sig-crit: #d03b3b;
+  --sig-good: #4ac94a;
+  --sig-warn: #d1ae64;
+  --sig-serious: #d58d72;
+  --sig-crit: #d06262;
   --info: #86b6ef;
 
   /*
@@ -192,6 +207,7 @@
   --n5: #d2d7e1;
   --n6: #c0c6d3;
   --n7: #a7aebd;
+  --edge: #c6ccd7;
   --n8: #8d95a5;
   --n9: #737b8b;
   --n10: #5b6372;
@@ -227,20 +243,20 @@
   --violet: #6b52a0;
   --magenta: #8a4f6b;
 
-  --cat-1: #1f6fd0;
-  --cat-2: #b8451a;
-  --cat-3: #0f7f59;
-  --cat-4: #8a6600;
-  --cat-5: #b23a68;
-  --cat-6: #16700f;
-  --cat-7: #6a5fd0;
-  --cat-8: #c04545;
+  --cat-1: #3366a2;
+  --cat-2: #9c5031;
+  --cat-3: #2d8e6c;
+  --cat-4: #92702e;
+  --cat-5: #a4345d;
+  --cat-6: #2a842a;
+  --cat-7: #4638b2;
+  --cat-8: #ac3636;
   --cat-neutral: #6b7280;
 
-  --sig-good: #0a7a0a;
-  --sig-warn: #a06c00;
-  --sig-serious: #c25f2e;
-  --sig-crit: #b02a2a;
+  --sig-good: #1f841f;
+  --sig-warn: #a57d27;
+  --sig-serious: #b6522b;
+  --sig-crit: #a22626;
   --info: #2c6cb8;
 
   --bracket-1: #1f6fd0;
@@ -388,7 +404,7 @@ body,
   max-width: 90vw;
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   overflow: hidden;
   animation: palette-in 120ms ease-out;
@@ -428,7 +444,7 @@ body,
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-md);
   cursor: pointer;
   color: var(--n12);
   font-size: 13px;
@@ -477,7 +493,16 @@ body,
 .corner-stack {
   position: fixed;
   right: 16px;
-  bottom: 40px;
+  /*
+   * Above the terminal, not over it.
+   *
+   * These float bottom-right and were landing on the terminal panel — hiding
+   * the output of the agent whose change the alert is about, and swallowing
+   * clicks on the right end of the terminal's own toolbar. `--terminal-h` is
+   * published by the app root; the fallback keeps them off the status bar for
+   * any surface that does not set it.
+   */
+  bottom: calc(var(--terminal-h, 0px) + 40px);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -502,7 +527,7 @@ body,
   border: 1px solid var(--n6);
   border-left: 3px solid var(--accent);
   color: var(--n13);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 8px 14px;
   font-size: 12px;
   box-shadow: var(--shadow-2);
@@ -708,7 +733,7 @@ body,
   max-width: 300px;
   background: var(--veil-strong);
   border: 1px solid var(--n6);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   padding: 8px 10px;
   pointer-events: none;
   box-shadow: var(--shadow-2);
@@ -762,7 +787,7 @@ body,
   align-items: baseline;
   gap: 10px;
   padding: 2px 4px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 }
 
 .command-row:hover {
@@ -801,7 +826,7 @@ body,
   min-width: 210px;
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-2);
   padding: 4px;
   font-size: 12px;
@@ -810,7 +835,7 @@ body,
 
 .ctx-item {
   padding: 6px 10px;
-  border-radius: 5px;
+  border-radius: var(--r-md);
   cursor: pointer;
   color: var(--n12);
 }
@@ -839,7 +864,7 @@ body,
   max-width: 90vw;
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   padding: 16px;
   animation: palette-in 120ms ease-out;
@@ -856,7 +881,7 @@ body,
   width: 100%;
   background: var(--n0);
   border: 1px solid var(--n6);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   color: var(--n13);
   padding: 8px 10px;
   font-size: 13px;
@@ -976,7 +1001,7 @@ body,
   gap: 10px;
   padding: 6px 14px;
   border: 1px solid var(--n4);
-  border-radius: 7px;
+  border-radius: var(--r-md);
   background: var(--n1);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -1060,7 +1085,7 @@ body,
   gap: 1px;
   background: var(--n2);
   border: 1px solid var(--n5);
-  border-radius: 5px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
@@ -1116,7 +1141,7 @@ body,
 .issue {
   border: 1px solid var(--n4);
   border-left: 3px solid var(--n6);
-  border-radius: 7px;
+  border-radius: var(--r-md);
   padding: 8px 10px;
   margin-bottom: 7px;
   background: var(--n1);
@@ -1169,7 +1194,7 @@ body,
   display: inline;
   font-size: 10.5px;
   background: var(--n3);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 1px 5px;
 }
 
@@ -1177,7 +1202,7 @@ body,
   margin-left: auto;
   background: transparent;
   border: 1px solid var(--n6);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--n10);
   font-family: inherit;
   font-size: 10px;
@@ -1391,7 +1416,7 @@ body,
 .topbar input.search {
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--n13);
   padding: 4px 8px;
   width: 260px;
@@ -1535,7 +1560,7 @@ button.btn.warn {
   display: grid;
   place-items: center;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--n10);
   font-size: 13px;
@@ -1732,20 +1757,58 @@ button.btn.warn {
   pointer-events: auto;
 }
 
+/*
+ * Folders, down the left rather than across the top.
+ *
+ * The top strip already carried the lens switcher, the view switcher and the
+ * colour legend; the folder chips made a fourth row and it is the only chrome
+ * that competes with the canvas for the same pixels — a wide repo pushed the
+ * strip down over the top rank of nodes. Vertical, it grows into space the
+ * graph is not using, and one repo with thirty folders scrolls instead of
+ * eating the map.
+ *
+ * Positioned against the toolbar overlay (its offset parent) rather than the
+ * canvas, so it hangs directly under the strip without needing to know how
+ * tall the strip currently is.
+ */
 .legend {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 4;
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  /* every folder is listed, so a wide repo scrolls here rather than growing
-     the strip until it covers the graph */
-  max-height: 84px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: max-content;
+  min-width: 132px;
+  max-width: 216px;
+  /* the graph keeps the rest of the height; past this the folders scroll */
+  max-height: min(52vh, 460px);
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--veil);
   border: 1px solid var(--n5);
-  border-radius: 6px;
-  padding: 4px 10px;
+  border-radius: var(--r-md);
+  padding: 7px 9px;
   font-size: 11px;
   color: var(--n12);
+}
+
+/* the chips stack, so each gets the full width and its name is readable */
+.legend .item {
+  width: 100%;
+  text-align: left;
+}
+
+.legend-actions {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.legend-actions .legend-act {
+  width: 100%;
+  text-align: left;
 }
 
 .legend .item {
@@ -1787,7 +1850,7 @@ button.btn.warn {
 }
 
 .legend-actions .legend-act:first-child {
-  border-radius: 4px 0 0 4px;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
 }
 
 .legend-actions .legend-act:last-child {
@@ -1807,7 +1870,7 @@ button.btn.warn {
 
 .legend .item.clickable {
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   padding: 1px 4px;
   margin: -1px -4px;
 }
@@ -1826,7 +1889,7 @@ button.btn.warn {
   gap: 1px;
   background: var(--veil);
   border: 1px solid var(--n5);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
@@ -2068,12 +2131,44 @@ button.btn.warn {
 }
 
 .details-panel {
+  position: relative;
   background: var(--n0);
   background-image: linear-gradient(180deg, var(--wash), transparent 180px);
   border-left: 1px solid var(--line-faint);
   overflow-y: auto;
   flex: 0 0 auto;
   padding: 10px;
+}
+
+/*
+ * The way out, top-right where a panel's close is looked for.
+ *
+ * Sticky rather than absolute so it stays reachable after scrolling down a
+ * long file's metrics — the panel is the one surface here you routinely
+ * scroll, and a close button that leaves the viewport is one you have to
+ * scroll back up to find.
+ */
+.details-close {
+  position: sticky;
+  top: 0;
+  float: right;
+  z-index: 1;
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  margin: -4px -4px 0 6px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--n9);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.details-close:hover {
+  color: var(--n13);
+  background: var(--n3);
 }
 
 .details-panel h3 {
@@ -2235,7 +2330,7 @@ button.btn.warn {
   align-items: center;
   gap: 10px;
   padding: 3px 4px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   color: var(--n12);
   font-size: 12px;
@@ -2409,10 +2504,18 @@ button.btn.warn {
 }
 
 .gedge {
-  /* At rest the edges are structure you read past, not data you read. They
-    become the signal on hover, where they get colour, opacity and weight. */
+  /*
+   * At rest the edges are structure you read past, not data you read. They
+   * become the signal on hover, where they get colour, opacity and weight.
+   *
+   * Its own token rather than --n7, because the two themes have to match in
+   * *contrast against their own ground*, not in position on the ramp. --n7 sat
+   * about 19 lightness steps off the dark surface and about 27 off the light
+   * one, so the same rule drew a whisper on dark and a web of grey on light —
+   * which is only really felt on a repo with enough files to draw a hairball.
+   */
   fill: none;
-  stroke: var(--n7);
+  stroke: var(--edge);
   stroke-width: var(--w, 0.8px);
   opacity: 0.32;
   stroke-linecap: round;
@@ -2422,7 +2525,7 @@ button.btn.warn {
 .gedge.intra {
   /* wiring *inside* an expanded file is the thing you asked to see — it stays
     a touch louder than the file-level scaffold */
-  stroke: var(--n7);
+  stroke: var(--edge);
   stroke-dasharray: 3 4;
   opacity: 0.5;
 }
@@ -2485,7 +2588,7 @@ button.btn.warn {
   gap: 7px;
   padding: 0 8px 0 0;
   box-sizing: border-box;
-  border-radius: 7px;
+  border-radius: var(--r-md);
   border: 1px solid var(--n7);
   /*
    * The body is a background-COLOR, not a background shorthand.
@@ -2541,7 +2644,7 @@ button.btn.warn {
   width: 4px;
   align-self: stretch;
   flex: 0 0 4px;
-  border-radius: 7px 0 0 7px;
+  border-radius: var(--r-md) 0 0 var(--r-md);
 }
 
 .gcard .gname {
@@ -2582,7 +2685,7 @@ button.btn.warn {
   font-size: 9px;
   line-height: 1;
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: var(--n4);
   color: var(--n11);
   font-variant-numeric: tabular-nums;
@@ -2612,7 +2715,7 @@ button.btn.warn {
 
 /* folder / cluster cards read as containers, not files */
 .gcard.folder {
-  border-radius: 9px;
+  border-radius: var(--r-lg);
   border-style: solid;
   border-color: var(--n7);
   --card-body:
@@ -2636,7 +2739,17 @@ button.btn.warn {
 }
 
 .gcard.symbol {
-  border-radius: 13px;
+  /*
+   * A pill, said as one.
+   *
+   * This was 13px on a 24px-tall node — more than half its height, so the
+   * browser was already clamping it to a stadium. Saying 999px expresses the
+   * intent (a symbol is a different *kind* of thing from a file card, and
+   * reads as one at a glance) and joins the pill vocabulary the rest of the
+   * app uses, instead of being a magic number that happens to exceed half a
+   * height defined in a TypeScript constant.
+   */
+  border-radius: 999px;
   --card-body: linear-gradient(180deg, var(--n4) 0%, var(--n2) 100%);
   background-color: var(--n3);
   border-color: var(--n6);
@@ -2995,7 +3108,7 @@ button.btn.warn {
 .dblock {
   position: absolute;
   border: 1px solid var(--n5);
-  border-radius: 5px;
+  border-radius: var(--r-md);
   box-sizing: border-box;
   pointer-events: none;
 }
@@ -3187,10 +3300,13 @@ button.btn.warn {
   gap: 10px;
   flex-wrap: wrap;
   max-width: 100%;
+  /* the far end of the toolbar row: the colours are a reference you glance at,
+     not a control you reach for, so they sit out of the way of the switchers */
+  margin-left: auto;
   background: var(--veil);
   border: 1px solid var(--n5);
   border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 4px 10px;
   font-size: 11px;
   color: var(--n11);
@@ -3205,6 +3321,69 @@ button.btn.warn {
 .lens-reading-text {
   flex: 1 1 260px;
   min-width: 0;
+}
+
+/*
+ * The explanation, one hover away.
+ *
+ * A lens is read once and its colours are read continuously, so the prose sits
+ * behind this and the scale gets the room. Pure CSS: no state to get stuck
+ * open, and it answers to :focus-visible so it is reachable from the keyboard
+ * rather than being a mouse-only affordance.
+ */
+.lens-info {
+  position: relative;
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--n9);
+  cursor: help;
+  flex: 0 0 auto;
+}
+
+.lens-info:hover,
+.lens-info:focus-visible {
+  color: var(--accent);
+}
+
+.lens-info-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  /* anchored to its right edge, not centred on the button: the strip sits at
+     the far end of the toolbar, so a centred popover hangs off the window */
+  right: -4px;
+  left: auto;
+  z-index: 40;
+  width: max-content;
+  max-width: 340px;
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  text-align: left;
+  white-space: normal;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n11);
+  background: var(--n1);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-3);
+  pointer-events: none;
+}
+
+.lens-info-pop b {
+  color: var(--n13);
+  font-weight: 600;
+}
+
+.lens-info:hover .lens-info-pop,
+.lens-info:focus-visible .lens-info-pop {
+  display: flex;
 }
 
 .lens-scale {
@@ -3223,7 +3402,7 @@ button.btn.warn {
   display: inline-flex;
   height: 8px;
   width: 76px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   border: 1px solid var(--n5);
 }
@@ -3248,7 +3427,10 @@ button.btn.warn {
   overflow-y: auto;
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 12px;
+  /* the same corner every large floating surface uses — this was 12px while
+     the modals beside it were 6px, which is the sort of thing that reads as
+     "assembled from parts" without anyone being able to point at why */
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   padding: 18px 20px 16px;
   animation: palette-in 130ms ease-out;
@@ -3303,7 +3485,7 @@ button.btn.warn {
   color: var(--n13);
   background: var(--n4);
   border: 1px solid var(--n6);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   padding: 1px 5px;
   text-align: center;
   white-space: nowrap;
@@ -3351,7 +3533,7 @@ button.btn.warn {
   font-family: inherit;
   font-size: 12px;
   padding: 4px 9px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -3374,7 +3556,7 @@ button.btn.warn {
   min-width: 246px;
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-2);
   padding: 4px;
   font-size: 12px;
@@ -3392,7 +3574,7 @@ button.btn.warn {
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: var(--r-md);
   cursor: pointer;
   color: var(--n12);
   white-space: nowrap;
@@ -3475,7 +3657,7 @@ button.btn.warn {
   color: var(--n11);
   font-size: 12px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--n2);
   border: 1px solid var(--n5);
   max-width: 260px;
@@ -3594,7 +3776,7 @@ button.btn.warn {
   flex: 0 0 auto;
   border: 1px solid var(--n4);
   border-left: 3px solid var(--n6);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   background: var(--n1);
   overflow: hidden;
 }
@@ -3645,7 +3827,7 @@ button.btn.warn {
 .verify-pill {
   font-size: 10px;
   padding: 1px 7px;
-  border-radius: 9px;
+  border-radius: var(--r-lg);
   border: 1px solid var(--n6);
   color: var(--n11);
   white-space: nowrap;
@@ -3673,7 +3855,7 @@ button.btn.warn {
 .smell-chip {
   font-size: 9.5px;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: var(--n3);
   white-space: nowrap;
 }
@@ -3691,7 +3873,7 @@ button.btn.warn {
   line-height: 1.5;
   color: var(--n12);
   background: var(--n2);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 7px 10px;
 }
 
@@ -3718,7 +3900,7 @@ button.btn.warn {
 
 .burst-evidence {
   font-size: 11.5px;
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 7px 10px;
   background: var(--n2);
   border-left: 2px solid var(--n6);
@@ -3762,7 +3944,7 @@ button.btn.warn {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: var(--n3);
   color: var(--n11);
 }
@@ -3799,7 +3981,7 @@ button.btn.warn {
 
 .smell {
   background: var(--n2);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 7px 10px;
 }
 
@@ -3824,7 +4006,7 @@ button.btn.warn {
 .smell-paths .deplink {
   font-size: 10.5px;
   background: var(--n3);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 1px 5px;
 }
 
@@ -3848,7 +4030,7 @@ button.btn.warn {
   align-items: center;
   gap: 8px;
   padding: 3px 6px;
-  border-radius: 5px;
+  border-radius: var(--r-md);
   font-size: 11.5px;
   cursor: pointer;
 }
@@ -3867,7 +4049,7 @@ button.btn.warn {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--n6);
   color: var(--n10);
   cursor: help;
@@ -3909,7 +4091,7 @@ button.btn.warn {
 .row-btn {
   background: transparent;
   border: 1px solid var(--n6);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--n10);
   font-family: inherit;
   font-size: 10px;
@@ -3940,7 +4122,7 @@ button.btn.warn {
   padding: 7px 12px;
   background: var(--veil-strong);
   border: 1px solid var(--n6);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-2);
   max-width: 92%;
 }
@@ -3974,7 +4156,7 @@ button.btn:disabled {
   margin-left: 10px;
   background: var(--n2);
   border: 1px solid var(--n5);
-  border-radius: 5px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 
@@ -4018,7 +4200,7 @@ button.btn:disabled {
   font-size: 9.5px;
   text-transform: uppercase;
   padding: 0 5px;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   background: var(--n3);
   color: var(--n11);
   cursor: help;
@@ -4035,7 +4217,7 @@ button.btn:disabled {
 /* compact smells: title always visible, detail on demand */
 .smell {
   background: var(--n2);
-  border-radius: 6px;
+  border-radius: var(--r-md);
   padding: 4px 9px;
 }
 
@@ -4138,7 +4320,7 @@ button.btn:disabled {
 
 .board-hint code {
   background: var(--n3);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 0 4px;
   font-size: 10.5px;
   color: var(--accent-soft);
@@ -4154,7 +4336,7 @@ button.btn:disabled {
 .board-hint-row code,
 .collab code {
   background: var(--n3);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 0 4px;
   font-size: 10.5px;
   color: var(--accent-soft);
@@ -4379,6 +4561,23 @@ button.btn:disabled {
 .modal.routine-wizard {
   width: 640px;
   max-width: 92vw;
+  max-height: min(720px, 90vh);
+}
+
+/* The dialog does not scroll — this does, so the footer stays reachable. */
+.routine-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* was the dialog's own column: keep the spacing the children were written for */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.modal.routine-wizard .modal-actions {
+  flex: 0 0 auto;
 }
 
 .routine-rule {
@@ -4535,7 +4734,7 @@ button.btn:disabled {
   min-height: 0;
   background: var(--n1);
   border: 1px solid var(--n4);
-  border-radius: 9px;
+  border-radius: var(--r-lg);
 }
 
 .lane.dropping {
@@ -4563,7 +4762,7 @@ button.btn:disabled {
   font-size: 10px;
   color: var(--n9);
   background: var(--n3);
-  border-radius: 8px;
+  border-radius: var(--r-lg);
   padding: 0 6px;
   font-variant-numeric: tabular-nums;
 }
@@ -4582,7 +4781,7 @@ button.btn:disabled {
   flex: 0 0 auto;
   background: transparent;
   border: 1px dashed var(--n6);
-  border-radius: 7px;
+  border-radius: var(--r-md);
   color: var(--n10);
   font-family: inherit;
   font-size: 11.5px;
@@ -4599,7 +4798,7 @@ button.btn:disabled {
   flex: 0 0 auto;
   background: linear-gradient(180deg, var(--n3) 0%, var(--n2) 100%);
   border: 1px solid var(--n5);
-  border-radius: 7px;
+  border-radius: var(--r-md);
   padding: 8px 9px;
   display: flex;
   flex-direction: column;
@@ -4645,7 +4844,7 @@ button.btn:disabled {
 .task-paths .deplink {
   font-size: 10px;
   background: var(--n3);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   padding: 1px 5px;
 }
 
@@ -4705,7 +4904,7 @@ button.btn:disabled {
 .lane-select {
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--n11);
   font-family: inherit;
   font-size: 10px;
@@ -4717,7 +4916,7 @@ button.btn:disabled {
   width: 100%;
   background: var(--n0);
   border: 1px solid var(--n6);
-  border-radius: 5px;
+  border-radius: var(--r-md);
   color: var(--n13);
   padding: 5px 7px;
   font-size: 11.5px;
@@ -5731,7 +5930,7 @@ button.btn:disabled {
 .modal {
   background: var(--n1);
   border: 1px solid var(--n4);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   padding: 18px 20px;
   display: flex;
@@ -5951,5 +6150,803 @@ button.btn:disabled {
 
 .legend.folded-away {
   /* nothing but the summary and the chevron, so the graph gets the room */
-  flex-wrap: nowrap;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  min-width: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+/* ---------------------------------------------------------------
+   The time machine — a session's history compressed to a strip
+   --------------------------------------------------------------- */
+
+/*
+ * It lives in the review bar and takes the leading position, because it is
+ * what you navigate with; the counts it used to sit next to moved right of the
+ * spacer and gave up their labels, since the strip now shows the same shape in
+ * less room than the words took.
+ */
+.burst-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.bs-step {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--n9);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+
+.bs-step:hover:not(:disabled) {
+  color: var(--n13);
+  background: var(--n3);
+}
+
+.bs-step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* the ticks themselves: oldest left, now at the right edge */
+.bs-rail {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  border-radius: var(--r-sm);
+}
+
+.bs-rail:focus-visible {
+  outline: 1px solid var(--accent-line);
+  outline-offset: 1px;
+}
+
+.bs-tick {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 100%;
+  cursor: pointer;
+}
+
+/* the bar is the change; its height is how many files, its colour is who */
+.bs-bar {
+  display: block;
+  width: 100%;
+  border-radius: 1px;
+  opacity: 0.55;
+  transition: opacity 90ms ease;
+}
+
+.bs-tick:hover .bs-bar {
+  opacity: 0.9;
+}
+
+/*
+ * The verdict rides under the bar rather than recolouring it: colour already
+ * means *which agent*, and one channel cannot carry two meanings without
+ * making both unreadable.
+ */
+.bs-tick::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 2px;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.bs-tick.tone-crit::after {
+  background: var(--crit);
+}
+
+.bs-tick.tone-warn::after {
+  background: var(--warn-dim);
+}
+
+.bs-tick.tone-good::after {
+  background: var(--good-line);
+}
+
+.bs-tick.selected .bs-bar {
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--n13);
+}
+
+.bs-flag {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  line-height: 1;
+  color: var(--good);
+  pointer-events: none;
+}
+
+/* decisions, questions and crossings — events with no size, so glyphs */
+.bs-mark {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 1px;
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--n9);
+  cursor: pointer;
+  align-self: center;
+}
+
+.bs-mark:hover {
+  color: var(--n13);
+}
+
+.bs-conflict {
+  color: var(--warn) !important;
+}
+
+.bs-conflict:hover {
+  color: var(--warn-soft) !important;
+}
+
+.bs-live {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--n8);
+  padding-left: 2px;
+}
+
+.bs-live.writing {
+  color: var(--accent);
+  animation: bs-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes bs-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bs-live.writing {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+/* which moment you are looking at, in words */
+.bs-now {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 210px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.bs-agent {
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.bs-when {
+  font-size: 10px;
+  color: var(--n9);
+  font-variant-numeric: tabular-nums;
+}
+
+.bs-toggle {
+  appearance: none;
+  background: none;
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  padding: 1px 5px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--n9);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.bs-toggle:hover {
+  color: var(--n13);
+}
+
+.bs-toggle.on {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-bg);
+}
+
+/*
+ * Only there when you have stepped off the end. A permanent "live" button
+ * would be a mode indicator pretending to be an action.
+ */
+.bs-return {
+  appearance: none;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-bg);
+  color: var(--accent-soft);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.bs-return:hover {
+  background: var(--accent-bg-strong);
+}
+
+/* ---------------------------------------------------------------
+   Review: the map and the ledger, side by side
+   --------------------------------------------------------------- */
+
+.review-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+}
+
+/*
+ * The map. Left, because it is what you look at first and reading starts
+ * there; the reasons for each file sit to its right, where you go when the
+ * shape has told you which file to ask about.
+ */
+.review-map {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 56%;
+  border-right: 1px solid var(--n5);
+}
+
+.review-map-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.review-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* collapsed: a rail wide enough for its own label and nothing else */
+.review-map.collapsed,
+.review-side.collapsed {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.review-side.collapsed {
+  border-left: 1px solid var(--n5);
+}
+
+/*
+ * Every pane that can be collapsed is collapsed the same way: a quiet chevron
+ * in its own top-left corner, naming the pane rather than the action. The
+ * graph's legend, the sidebar and the terminal already work this way.
+ */
+.pane-collapse {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--n5);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: left;
+  color: var(--n9);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.pane-collapse:hover {
+  color: var(--n13);
+  background: var(--n2);
+}
+
+.review-map.collapsed .pane-collapse,
+.review-side.collapsed .pane-collapse {
+  border-bottom: 0;
+  height: 100%;
+  writing-mode: vertical-rl;
+  padding: 10px 4px;
+}
+
+.review-body .review-list {
+  padding-top: 8px;
+}
+
+/* the head has to hold the strip as well now, so the counts lose their air */
+.review-head-stats.compact {
+  gap: 10px;
+}
+
+.review-head-stats.compact .rh-num {
+  font-size: 13px;
+}
+
+.review-head-stats.compact .rh-label {
+  display: none;
+}
+
+/* ---------------------------------------------------------------
+   Crossings, drawn on the map
+   --------------------------------------------------------------- */
+
+/*
+ * A file two agents both wrote.
+ *
+ * The same 7px dot that normally says *who* changed it, split down the middle
+ * into both of their colours. It gets a ring and a hair more size so the split
+ * reads as deliberate rather than as a rendering artefact at this scale — the
+ * tooltip names both agents, but the point is that you do not have to ask.
+ */
+.gcard .gagent.contested {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  box-shadow: 0 0 0 1px var(--n1);
+  outline: 1px solid var(--warn-dim);
+}
+
+/*
+ * One agent changed something another agent's in-flight work imports.
+ *
+ * Painted on the import itself, because that dependency is what makes it a
+ * conflict at all — the edge was already on the canvas saying "this one needs
+ * that one", and the crossing is that same sentence in the past tense. Louder
+ * than the resting scaffold, quieter than the hover states, so a live trace
+ * still wins the foreground.
+ */
+.gedge.collision {
+  stroke: var(--warn);
+  opacity: 0.85;
+  stroke-width: calc(var(--w, 0.8px) * 1.8 + 0.5px);
+  stroke-dasharray: 5 3;
+}
+
+.gedge.collision.faded {
+  opacity: 0.25;
+}
+
+/* ---------------------------------------------------------------
+   The morning briefing
+   --------------------------------------------------------------- */
+
+/*
+ * Covers everything, and does not animate in.
+ *
+ * The graph is still behind it, very slightly visible through the wash — this
+ * is a caption on that map rather than a separate screen, and dismissing it
+ * fades the wash rather than closing a window.
+ */
+.briefing {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: color-mix(in srgb, var(--n1) 94%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.briefing-sheet {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.briefing-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.briefing-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--n13);
+}
+
+.briefing-since {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--n9);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* prose, never stat tiles — see the note in shared/briefing.ts */
+.briefing-counts {
+  margin: -12px 0 0;
+  font-size: 13px;
+  color: var(--n11);
+}
+
+.briefing-counts b {
+  color: var(--warn-soft);
+  font-weight: 600;
+}
+
+.briefing-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.briefing-row {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  padding: 9px 12px;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  cursor: pointer;
+  color: var(--n13);
+}
+
+.briefing-row:hover:not(:disabled) {
+  background: var(--n3);
+}
+
+.briefing-row:disabled {
+  cursor: default;
+  color: var(--n11);
+}
+
+.briefing-mark {
+  flex: 0 0 14px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n9);
+}
+
+.briefing-row.conflict .briefing-mark {
+  color: var(--warn);
+}
+
+.briefing-row.question .briefing-mark {
+  color: var(--accent);
+}
+
+.briefing-row.clear .briefing-mark {
+  color: var(--good);
+}
+
+.briefing-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.briefing-headline {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.briefing-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n9);
+}
+
+.briefing-more {
+  padding: 4px 12px 0 38px;
+  font-size: 11px;
+  color: var(--n9);
+}
+
+.briefing-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.briefing-skip {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--n9);
+  cursor: pointer;
+}
+
+.briefing-skip:hover {
+  color: var(--n13);
+}
+
+/* ---------------------------------------------------------------
+   A task, at a size you can read it at
+   --------------------------------------------------------------- */
+
+/*
+ * Wide enough for a brief to read as prose rather than as a column of four
+ * words, and tall enough that the notes are visible rather than counted.
+ * Capped against the viewport so it stays a sheet on a laptop.
+ */
+.modal.task-modal {
+  width: min(720px, 100%);
+  max-height: min(760px, 90vh);
+  gap: 12px;
+}
+
+.tm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tm-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/*
+ * The scroll lives here, not on the dialog: the title stays put while you read
+ * a long brief, and Save never scrolls off the bottom — which is the whole
+ * complaint about editing one of these in a lane.
+ */
+.tm-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
+.tm-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--n9);
+  margin-top: 6px;
+}
+
+.tm-brief {
+  min-height: 190px;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.tm-paths {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.tm-pathrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* the progress log an agent wrote back, no longer behind a count */
+.tm-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  background: var(--n2);
+}
+
+.tm-note-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  min-width: 0;
+}
+
+.tm-notes .note-when {
+  margin-left: auto;
+  color: var(--n8);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* the affordance the card never had: something that says it opens */
+.task-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.task-expand {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  margin-left: auto;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--n8);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 90ms linear;
+}
+
+.task-card:hover .task-expand,
+.task-expand:focus-visible {
+  opacity: 1;
+}
+
+.task-expand:hover {
+  color: var(--n13);
+}
+
+/* ---- a dragged span of the session ---------------------------------- */
+
+/*
+ * Ticks inside the span keep their agent colour and gain a floor, rather than
+ * being recoloured: which agent made a change does not stop being true because
+ * you selected a range around it.
+ */
+.bs-tick.in-span .bs-bar {
+  opacity: 1;
+}
+
+.bs-tick.in-span {
+  background: var(--accent-bg);
+  border-radius: 1px;
+}
+
+.bs-rail {
+  /* a drag across the rail is a selection, not a text drag */
+  user-select: none;
+}
+
+.bs-span {
+  appearance: none;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-bg);
+  color: var(--accent-soft);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bs-span:hover {
+  background: var(--accent-bg-strong);
+}
+
+/* ---- the heartbeat: a status beside Connect agent, set in the Routine ---- */
+
+/*
+ * A chip, not a control. It says what is set and takes you to the one place
+ * it is set — a second editor here would be a second field to keep in step,
+ * which is what made this hard to find in the first place.
+ */
+.hb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--n9);
+}
+
+.hb-chip.on {
+  color: var(--good);
+  border-color: var(--good-line);
+}
+
+.hb-chip:hover {
+  color: var(--n13);
+}
+
+/* the timer's two fields, under the mode it belongs to */
+.routine-timer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 2px 26px;
+}
+
+.routine-timer label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.routine-timer label.grow {
+  flex: 1 1 auto;
+}
+
+.routine-timer select,
+.routine-timer input {
+  background: var(--n2);
+  color: var(--n12);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.routine-timer input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.routine-timer input:focus,
+.routine-timer select:focus {
+  outline: none;
+  border-color: var(--accent-line);
 }

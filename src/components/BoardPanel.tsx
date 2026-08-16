@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   addLane,
   addNote,
@@ -18,6 +18,7 @@ import {
 import { api } from '../api';
 import { toast } from './Toasts';
 import { DecisionsSection, QuestionsSection } from './Collaboration';
+import { TaskModal } from './TaskModal';
 import { RoutineWizard } from './RoutineWizard';
 import type { ModalRequest } from './Menus';
 
@@ -40,6 +41,10 @@ interface Props {
   onSelectFile(path: string): void;
   onOpenFile(path: string): void;
   onModal(request: ModalRequest): void;
+  /** bumped from elsewhere (the terminal bar's heartbeat chip) to open the Routine */
+  openRoutine?: number;
+  /** this project's MCP endpoint, for the routine's default heartbeat command */
+  mcpUrl?: string | null;
 }
 
 function ago(time: number): string {
@@ -50,7 +55,16 @@ function ago(time: number): string {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpenFile, onModal }: Props) {
+export function BoardPanel({
+  board,
+  selectedPaths,
+  onChange,
+  onSelectFile,
+  onOpenFile,
+  onModal,
+  openRoutine = 0,
+  mcpUrl = null,
+}: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ title: string; brief: string; paths: string }>({
     title: '',
@@ -62,10 +76,24 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
   const [section, setSection] = useState<Section>('tasks');
   const [wizardOpen, setWizardOpen] = useState(false);
 
+  /*
+   * Opened from somewhere else — the terminal bar's heartbeat chip.
+   *
+   * A counter, so a second click reopens it after you have closed it; the
+   * initial 0 is skipped so arriving at the board does not pop the wizard.
+   */
+  useEffect(() => {
+    if (openRoutine) setWizardOpen(true);
+  }, [openRoutine]);
+
   const byLane = useMemo(
     () => new Map(board.lanes.map((lane) => [lane.id, tasksInLane(board, lane.id)])),
     [board],
   );
+
+  /** The task the modal is open on, or null. Resolved fresh so an agent's
+      note landing over MCP while you have it open is not written back out. */
+  const editingTask = editing ? (board.tasks.find((t) => t.id === editing) ?? null) : null;
 
   const startEdit = (task: Task) => {
     setEditing(task.id);
@@ -187,7 +215,7 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
       )}
 
       {wizardOpen && (
-        <RoutineWizard board={board} onChange={onChange} onClose={() => setWizardOpen(false)} />
+        <RoutineWizard board={board} onChange={onChange} onClose={() => setWizardOpen(false)} mcpUrl={mcpUrl} />
       )}
 
       {section === 'decisions' && (
@@ -266,6 +294,9 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
                       key={task.id}
                       className={`task-card${isEditing ? ' editing' : ''}`}
                       data-testid={`task-${task.id}`}
+                      // a card is for scanning; everything you would open a
+                      // task *for* happens at full size
+                      onDoubleClick={() => startEdit(task)}
                       draggable={!isEditing}
                       onDragStart={() => {
                         dragged.current = task.id;
@@ -280,96 +311,29 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
                         drop(lane.id, index);
                       }}
                     >
-                      {isEditing ? (
-                        <div
-                          className="task-edit"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              e.stopPropagation();
-                              setEditing(null);
-                            }
-                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                              e.preventDefault();
-                              commitEdit(task.id);
-                            }
+                      <div
+                        className="task-title"
+                        title="Open this task at full size — or double-click the card"
+                        onClick={() => startEdit(task)}
+                      >
+                        {/* the label is its own element: the row also holds
+                            the expand affordance, and "the title" should mean
+                            the title */}
+                        <span className="task-title-text">{task.title}</span>
+                        <button
+                          className="task-expand"
+                          title="Open this task at full size"
+                          aria-label="Open this task at full size"
+                          data-testid={`task-expand-${task.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEdit(task);
                           }}
                         >
-                          <input
-                            className="task-input title"
-                            value={draft.title}
-                            autoFocus
-                            placeholder="What needs doing?"
-                            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-                            data-testid="task-title-input"
-                          />
-                          <textarea
-                            className="task-input brief"
-                            value={draft.brief}
-                            rows={5}
-                            placeholder="The detail an agent needs: what to change, what done looks like, what to avoid."
-                            onChange={(e) => setDraft({ ...draft, brief: e.target.value })}
-                            data-testid="task-brief-input"
-                          />
-                          <textarea
-                            className="task-input paths mono"
-                            value={draft.paths}
-                            rows={3}
-                            placeholder={'Files, one per line\nsrc/api.ts'}
-                            onChange={(e) => setDraft({ ...draft, paths: e.target.value })}
-                            data-testid="task-paths-input"
-                          />
-                          {selectedPaths.length > 0 && (
-                            <button
-                              className="row-btn"
-                              title="add the files currently selected on the graph"
-                              onClick={() =>
-                                setDraft({
-                                  ...draft,
-                                  paths: [...new Set([...draft.paths.split('\n').filter(Boolean), ...selectedPaths])].join('\n'),
-                                })
-                              }
-                            >
-                              + {selectedPaths.length} selected on the graph
-                            </button>
-                          )}
-                          {/*
-                            Delete sits at the far end and Save at the near one:
-                            they were the other way round, which put the
-                            irreversible action exactly where the eye goes for
-                            the primary one.
-                          */}
-                          <div className="task-actions">
-                            <button
-                              className="btn danger"
-                              title="delete this task"
-                              onClick={() => {
-                                onChange(deleteTask(board, task.id));
-                                setEditing(null);
-                              }}
-                              data-testid="task-delete"
-                            >
-                              Delete
-                            </button>
-                            <span className="spacer" />
-                            <button className="btn" title="Esc" onClick={() => setEditing(null)}>
-                              Cancel
-                            </button>
-                            <button
-                              className="btn primary"
-                              title="Ctrl+Enter"
-                              onClick={() => commitEdit(task.id)}
-                              data-testid="task-save"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="task-title" onClick={() => startEdit(task)}>
-                            {task.title}
-                          </div>
-                          {task.brief && <div className="task-brief">{task.brief}</div>}
+                          ⤢
+                        </button>
+                      </div>
+                      {task.brief && <div className="task-brief">{task.brief}</div>}
                           {task.paths.length > 0 && (
                             <div className="task-paths">
                               {task.paths.slice(0, 4).map((p) => (
@@ -413,7 +377,7 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
                                 which nothing on the card said you could do */}
                             <button
                               className="row-btn"
-                              title="Edit this task's title, brief and files"
+                              title="Open this task at full size to edit its title, brief, files and notes"
                               onClick={() => startEdit(task)}
                               data-testid={`task-edit-${task.id}`}
                             >
@@ -449,8 +413,6 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
                               data-testid={`task-note-${task.id}`}
                             />
                           </div>
-                        </>
-                      )}
                     </div>
                   );
                 })}
@@ -466,6 +428,32 @@ export function BoardPanel({ board, selectedPaths, onChange, onSelectFile, onOpe
           );
         })}
       </div>
+      )}
+
+      {/*
+        Mounted at the panel root, not inside the card: a dialog nested in a
+        draggable, overflow-scrolled lane inherits the lane's clipping and its
+        drag handlers, which is how it ends up scrolling with the column it is
+        supposed to be covering.
+      */}
+      {editingTask && (
+        <TaskModal
+          task={editingTask}
+          lanes={board.lanes}
+          draft={draft}
+          onDraft={setDraft}
+          selectedPaths={selectedPaths}
+          onSave={() => commitEdit(editingTask.id)}
+          onCancel={() => setEditing(null)}
+          onDelete={() => {
+            onChange(deleteTask(board, editingTask.id));
+            setEditing(null);
+          }}
+          onLane={(laneId) => onChange(updateTask(board, editingTask.id, { laneId }))}
+          onSelectFile={onSelectFile}
+          onOpenFile={onOpenFile}
+          onCopyForAgent={() => void copyForAgent(editingTask)}
+        />
       )}
     </div>
   );

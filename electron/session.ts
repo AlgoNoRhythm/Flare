@@ -24,7 +24,21 @@ import {
   type BurstIntent,
   type ChangeBurst,
 } from '../shared/activity';
-import { formatTaskForAgent, mergeBoards, type Board, type PathContext } from '../shared/tasks';
+import {
+  claimedTasks,
+  formatTaskForAgent,
+  mergeBoards,
+  type Board,
+  type PathContext,
+} from '../shared/tasks';
+import {
+  attribute,
+  type Attributed,
+  type LiveAgentInfo,
+  type RecordedIntent,
+  type TaskClaim,
+} from '../shared/attribution';
+import { changedRanges, type BurstEdit } from '../shared/conflicts';
 import type {
   ChangeEvent,
   CommandLogEntry,
@@ -97,7 +111,14 @@ export class ProjectSession {
   /** path -> who made the last change ('you' or an agent name). */
   readonly changedBy: Record<string, string> = {};
   /** Injected by the agent monitor: who is active right now. */
-  attributionProvider: (() => string) | null = null;
+  /**
+   * Who is running, and where — the raw material for attributing a write.
+   *
+   * It reports candidates rather than an answer: with two agents live, only
+   * the board can say which of them a given file belongs to. See
+   * `attributeWrite` and shared/attribution.ts.
+   */
+  attributionProvider: (() => { agent: string; live: readonly LiveAgentInfo[] }) | null = null;
   /** Shell commands observed in the app's terminals (newest last). */
   readonly commands: CommandLogEntry[] = [];
   private commandsFile: string;
@@ -123,6 +144,16 @@ export class ProjectSession {
   /** pid -> where in its terminal's output the command started */
   private commandStarts = new Map<number, { terminalId: string; offset: number }>();
   private pendingIntent: BurstIntent | null = null;
+  /**
+   * The agent that last announced an edit, and what to call it.
+   *
+   * `activeIntent` is the identity behind the most recent `record_intent`;
+   * `callerLabels` is what each MCP session named itself by claiming a card.
+   * Together they are what lets two agents editing the same file be told
+   * apart — the board alone cannot, because it attributes by path.
+   */
+  private activeIntent: RecordedIntent | null = null;
+  private callerLabels = new Map<string, string>();
 
   constructor(
     root: string,
@@ -245,11 +276,51 @@ export class ProjectSession {
     };
   }
 
+  /**
+   * Attribute one write, board first.
+   *
+   * The claim beats the process list: two `claude` sessions are equally
+   * "running" in every sample, but only one of them claimed the card that
+   * names this file.
+   */
+  private attributeWrite(paths: string[]): Attributed {
+    const status = this.attributionProvider?.();
+    if (!status && !this.activeIntent) return { agent: 'you', basis: 'unknown' };
+    const claims: TaskClaim[] = claimedTasks(this.store.board).map((t) => ({
+      id: t.id,
+      title: t.title,
+      paths: t.paths,
+      by: t.notes[t.notes.length - 1]?.by ?? 'you',
+    }));
+    return attribute({
+      paths,
+      live: status?.live ?? [],
+      claims,
+      // a label claimed after the intent was recorded still applies to it
+      intent: this.activeIntent
+        ? { ...this.activeIntent, label: this.callerLabels.get(this.activeIntent.id) ?? this.activeIntent.label }
+        : null,
+    });
+  }
+
+  /**
+   * An MCP caller moved a card — that is how it tells us what to call it.
+   *
+   * Claiming work and announcing an edit are separate acts by the same agent,
+   * so the name is remembered against the session rather than against the
+   * intent: claim first and record intent later, or the other way round, and
+   * the ring on the graph reads the same either way.
+   */
+  noteClaim(callerId: string | null, title: string): void {
+    if (callerId) this.callerLabels.set(callerId, title);
+  }
+
   private handleBatch(batch: { changed: string[]; removed: string[] }): void {
     if (this.disposed) return;
     const now = Date.now();
-    const agent = this.attributionProvider?.() ?? 'you';
-    const burst = this.openBurst(agent, now);
+    const attributed = this.attributeWrite([...batch.changed, ...batch.removed]);
+    const agent = attributed.agent;
+    const burst = this.openBurst(attributed, now);
     const states = this.burstStates.get(burst.id)!;
 
     const parsedChanges = [];
@@ -322,10 +393,20 @@ export class ProjectSession {
   // activity log
   // ------------------------------------------------------------------
 
-  /** Extend the open burst, or start one. Same author + close in time = same burst. */
-  private openBurst(agent: string, now: number): ChangeBurst {
+  /**
+   * Extend the open burst, or start one. Same author + close in time = same burst.
+   *
+   * "Same author" is the *identity* where we have one: two agents writing
+   * alternate files a second apart are two bursts, and merging them would
+   * hide the very crossing the review panel is there to draw.
+   */
+  private openBurst(attributed: Attributed, now: number): ChangeBurst {
+    const agent = attributed.agent;
     const last = this.bursts[this.bursts.length - 1];
-    if (last && last.agent === agent && now - last.endedAt < BURST_GAP_MS) {
+    const sameAuthor = attributed.agentId
+      ? last?.agentId === attributed.agentId
+      : last?.agent === agent && !last?.agentId;
+    if (last && sameAuthor && now - last.endedAt < BURST_GAP_MS) {
       if (this.pendingIntent && !last.intent) {
         last.intent = this.pendingIntent;
         this.pendingIntent = null;
@@ -337,6 +418,8 @@ export class ProjectSession {
       startedAt: now,
       endedAt: now,
       agent,
+      agentId: attributed.agentId,
+      agentLabel: attributed.agentLabel,
       changed: [],
       removed: [],
       smells: [],
@@ -465,6 +548,33 @@ export class ProjectSession {
     return this.bursts;
   }
 
+  /**
+   * Which lines each burst wrote, per file.
+   *
+   * The renderer has the bursts but not the text behind them, and without the
+   * lines a conflict can only say "two agents wrote this file" — not whether
+   * the second one wrote *over* the first. That difference is the whole
+   * severity gap between a note and an alarm, so it is worth an extra channel.
+   */
+  getBurstEdits(): BurstEdit[] {
+    const out: BurstEdit[] = [];
+    for (const burst of this.bursts) {
+      const states = this.burstStates.get(burst.id);
+      if (!states) continue;
+      for (const [path, state] of states) {
+        const before = state.beforeText === undefined ? null : state.beforeText;
+        const ranges = changedRanges(before, state.afterText);
+        // `added` the same way finalizeBurst reads it: the flag alone is true
+        // for a file we simply had not seen yet, which is not the same as one
+        // that did not exist
+        if (ranges.length > 0) {
+          out.push({ burstId: burst.id, path, ranges, added: state.added && before === null });
+        }
+      }
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------------
   // task board
   // ------------------------------------------------------------------
@@ -543,7 +653,28 @@ export class ProjectSession {
    * there is one, otherwise waits for the next — agents usually announce
    * intent just before they start editing.
    */
-  setIntent(goal: string, ruledOut: string | undefined, source: 'agent' | 'you'): void {
+  /**
+   * What an agent says it is about to do — and, now, which agent said it.
+   *
+   * The caller id is the MCP session, and it is the strongest attribution
+   * signal Flare has: the writes that follow belong to whoever announced them,
+   * whatever card the files happen to be listed on. Anonymous callers (a
+   * client that never echoed the session header) behave exactly as before.
+   */
+  setIntent(
+    goal: string,
+    ruledOut: string | undefined,
+    source: 'agent' | 'you',
+    callerId?: string | null,
+  ): void {
+    if (callerId) {
+      this.activeIntent = {
+        id: callerId,
+        label: this.callerLabels.get(callerId) ?? null,
+        tool: this.attributionProvider?.().live[0]?.agent ?? null,
+        at: Date.now(),
+      };
+    }
     const intent: BurstIntent = { goal, ruledOut, at: Date.now(), source };
     const last = this.bursts[this.bursts.length - 1];
     if (last && Date.now() - last.endedAt < BURST_GAP_MS) {

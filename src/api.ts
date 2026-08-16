@@ -1,5 +1,6 @@
 import type { CoverageMap } from '../shared/coverage';
 import type { ChangeBurst } from '../shared/activity';
+import type { BurstEdit } from '../shared/conflicts';
 import type { Board } from '../shared/tasks';
 import type { UiState } from '../electron/services/store';
 import type { RecentEntry, SessionRedirect } from '../electron/core';
@@ -70,6 +71,8 @@ export interface FlareApi {
   activityGet(): Promise<ChangeBurst[]>;
   activityIntent(goal: string, ruledOut?: string): Promise<boolean>;
   activityLastGreen(): Promise<{ hash: string; at: number } | null>;
+  /** which lines each burst wrote — what lets a conflict say "12 of 14 lines" */
+  activityEdits(): Promise<BurstEdit[]>;
   markRead(paths: string[]): Promise<boolean>;
   boardGet(): Promise<Board | null>;
   boardSet(board: Board): Promise<boolean>;
@@ -231,6 +234,7 @@ export function createApi(t: FlareTransport): FlareApi {
     activityGet: () => call('activity:get'),
     activityIntent: (goal, ruledOut) => call('activity:intent', goal, ruledOut),
     activityLastGreen: () => call('activity:lastGreen'),
+    activityEdits: () => call('activity:edits'),
     markRead: (paths) => call('review:markRead', paths),
     boardGet: () => call('board:get'),
     boardSet: (board) => call('board:set', board),

@@ -1,4 +1,5 @@
 import * as http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { ProjectSession } from '../session';
 import type { GraphEdge, GraphNode } from '../../shared/types';
 import { isTestPath } from '../../shared/graph';
@@ -19,6 +20,7 @@ import {
 import { stopHookReply } from './heartbeat';
 import { McpRegistry, type McpRegistryEntry } from './mcpRegistry';
 import { SlugBook } from './slugs';
+import { APP_VERSION } from '../../shared/version';
 
 /**
  * Dependency-free MCP server (streamable-HTTP transport, JSON responses)
@@ -79,14 +81,62 @@ interface JsonRpcMessage {
   params?: Record<string, unknown>;
 }
 
+/**
+ * Who is calling.
+ *
+ * The MCP session id, minted on `initialize` and echoed back by the client on
+ * every later request. It is the only handle this server has that separates
+ * one agent from another — a process list cannot (two `claude` sessions look
+ * identical), and the board cannot (it attributes by path, so an agent editing
+ * someone else's file is recorded as them). Null when the client predates the
+ * header or never sent one, in which case attribution falls back down its
+ * rungs exactly as before.
+ */
+export interface McpCaller {
+  id: string | null;
+}
+
 interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler(args: Record<string, unknown>, session: ProjectSession): Promise<string> | string;
+  handler(
+    args: Record<string, unknown>,
+    session: ProjectSession,
+    caller: McpCaller,
+  ): Promise<string> | string;
 }
 
 const str = (desc: string) => ({ type: 'string', description: desc });
+
+/**
+ * Work out who is calling, minting an identity for a client that is new.
+ *
+ * `initialize` is the one message that means "a new agent is here", so it is
+ * where the id is handed out; every later request carries it back in the
+ * header. A client that ignores the header simply stays anonymous and
+ * attribution falls back to the board, which is what it did before this
+ * existed — so this cannot make anything worse than it already was.
+ */
+export function identify(
+  req: { headers: Record<string, string | string[] | undefined> },
+  body: string,
+): { caller: McpCaller; minted: string | null } {
+  const header = req.headers['mcp-session-id'];
+  const existing = typeof header === 'string' && header.length > 0 ? header : null;
+  if (existing) return { caller: { id: existing }, minted: null };
+
+  let method: string | undefined;
+  try {
+    method = (JSON.parse(body) as JsonRpcMessage).method;
+  } catch {
+    // a malformed body is the responder's problem, not ours
+  }
+  if (method !== 'initialize') return { caller: { id: null }, minted: null };
+
+  const minted = randomUUID();
+  return { caller: { id: minted }, minted };
+}
 
 function adjacency(edges: GraphEdge[], reverse: boolean): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -478,7 +528,7 @@ const TOOLS: ToolDef[] = [
       },
       required: ['id'],
     },
-    handler(args, session) {
+    handler(args, session, caller) {
       const id = String(args.id ?? '');
       let board = session.getBoard();
       const task = board.tasks.find((t) => t.id === id);
@@ -496,6 +546,9 @@ const TOOLS: ToolDef[] = [
       }
       if (parts.length === 0) return 'nothing to do: pass a lane, a note, or both';
       session.setBoard(board);
+      // moving a card out of the queue is how an agent claims it — and it is
+      // also the only moment this agent tells us what to *call* it
+      session.noteClaim(caller.id, task.title);
       return `${task.title}: ${parts.join(', ')}`;
     },
   },
@@ -657,11 +710,11 @@ const TOOLS: ToolDef[] = [
       },
       required: ['goal'],
     },
-    handler(args, session) {
+    handler(args, session, caller) {
       const goal = String(args.goal ?? '').trim();
       if (goal === '') return 'no goal given — nothing recorded';
       const ruledOut = args.ruled_out ? String(args.ruled_out).trim() : undefined;
-      session.setIntent(goal, ruledOut, 'agent');
+      session.setIntent(goal, ruledOut, 'agent', caller.id);
       return 'intent recorded; it will be shown next to your changes in the review panel';
     },
   },
@@ -846,7 +899,13 @@ export class McpServer {
       return;
     }
     const body = await readBody(req);
-    await this.respond(res, body, (message) => this.dispatch(message));
+    const { caller, minted } = identify(req, body);
+    await this.respond(
+      res,
+      body,
+      (message) => this.dispatch(message, caller),
+      minted ? { 'mcp-session-id': minted } : undefined,
+    );
   }
 
   // ------------------------------------------------------------------
@@ -871,14 +930,32 @@ export class McpServer {
     // known target that is another instance → proxy verbatim
     if (target && target.pid !== process.pid) {
       try {
+        /*
+         * The session id has to survive the hop, both ways.
+         *
+         * Only content-type was forwarded before, which was fine while the
+         * protocol was stateless — but the caller's identity now lives in a
+         * header, and an agent that reaches its project *through* the gateway
+         * would have arrived anonymous while one talking to the instance
+         * directly did not. Same agent, different answer, depending on which
+         * window happened to hold the well-known port.
+         */
+        const session = req.headers['mcp-session-id'];
         const upstream = await fetch(`http://127.0.0.1:${target.port}/mcp`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            ...(typeof session === 'string' && session ? { 'mcp-session-id': session } : {}),
+          },
           body,
           signal: AbortSignal.timeout(15_000),
         });
         const text = await upstream.text();
-        res.writeHead(upstream.status, { 'content-type': 'application/json' });
+        const minted = upstream.headers.get('mcp-session-id');
+        res.writeHead(upstream.status, {
+          'content-type': 'application/json',
+          ...(minted ? { 'mcp-session-id': minted } : {}),
+        });
         res.end(text);
       } catch {
         await this.respond(res, body, (message) => ({
@@ -892,8 +969,17 @@ export class McpServer {
       return;
     }
 
-    await this.respond(res, body, async (message) => {
-      if (target) return this.dispatch(message); // target is this instance
+    /*
+     * The gateway serves its own project too, and that path has to identify
+     * callers exactly as the private one does — otherwise an agent's identity
+     * depends on which URL it happened to be given.
+     */
+    const { caller, minted } = identify(req, body);
+    await this.respond(
+      res,
+      body,
+      async (message) => {
+      if (target) return this.dispatch(message, caller); // target is this instance
       if (slug) {
         // stable URL whose session is gone
         if (message.method === 'tools/call') {
@@ -905,7 +991,7 @@ export class McpServer {
           };
         }
         if (message.method === 'initialize' || message.method === 'tools/list' || message.method === 'ping') {
-          return this.dispatch(message); // generic protocol handling still works
+          return this.dispatch(message, caller); // generic protocol handling still works
         }
         return { error: { code: -32001, message: `no session for project ${slug}` } };
       }
@@ -920,8 +1006,10 @@ export class McpServer {
           };
         }
       }
-      return this.dispatch(message);
-    });
+      return this.dispatch(message, caller);
+      },
+      minted ? { 'mcp-session-id': minted } : undefined,
+    );
   }
 
   /**
@@ -988,7 +1076,10 @@ export class McpServer {
       return true;
     }
     const board = session.getBoard();
-    if (!board.routine?.heartbeat) {
+    // `=== 'stop-hook'`, not a truthiness check: 'off' is a non-empty string,
+    // so the obvious `!routine.heartbeat` reads as "a heartbeat is set" and
+    // blocks sessions on a project that switched it off
+    if (board.routine?.heartbeat !== 'stop-hook') {
       allow();
       return true;
     }
@@ -1013,6 +1104,8 @@ export class McpServer {
     res: http.ServerResponse,
     body: string,
     produce: (message: JsonRpcMessage) => Promise<Record<string, unknown>> | Record<string, unknown>,
+    /** extra response headers — the minted session id, on an initialize */
+    extra?: Record<string, string>,
   ): Promise<void> {
     let message: JsonRpcMessage;
     try {
@@ -1028,18 +1121,21 @@ export class McpServer {
       return;
     }
     const result = await produce(message);
-    res.writeHead(200, { 'content-type': 'application/json' });
+    res.writeHead(200, { 'content-type': 'application/json', ...extra });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, ...result }));
   }
 
-  private async dispatch(message: JsonRpcMessage): Promise<Record<string, unknown>> {
+  private async dispatch(
+    message: JsonRpcMessage,
+    caller: McpCaller = { id: null },
+  ): Promise<Record<string, unknown>> {
     switch (message.method) {
       case 'initialize':
         return {
           result: {
             protocolVersion: (message.params?.protocolVersion as string) ?? '2025-06-18',
             capabilities: { tools: { listChanged: false } },
-            serverInfo: { name: 'flare', version: '0.1.0' },
+            serverInfo: { name: 'flare', version: APP_VERSION },
           },
         };
       case 'ping':
@@ -1071,7 +1167,7 @@ export class McpServer {
           return { result: { content: [{ type: 'text', text: 'no project is open in Flare' }], isError: true } };
         }
         try {
-          const text = await tool.handler(args, session);
+          const text = await tool.handler(args, session, caller);
           return { result: { content: [{ type: 'text', text }] } };
         } catch (err) {
           return {

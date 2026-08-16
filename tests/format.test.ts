@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { band, num, percentileOf, plural, rankNote, scoreLabel } from '../src/format';
+import { band, num, percentileOf, plural, rankNote, scoreLabel, when } from '../src/format';
+
+describe('when', () => {
+  /* the briefing's "since 22:10" — a memory of leaving, not arithmetic */
+  const evening = new Date(2026, 7, 15, 22, 10).getTime();
+
+  it('is a bare clock time on the same day', () => {
+    expect(when(evening, new Date(2026, 7, 15, 23, 0).getTime())).toBe('22:10');
+  });
+
+  it('names the day once it is not today — the overnight case', () => {
+    expect(when(evening, new Date(2026, 7, 16, 9, 41).getTime())).toMatch(/^\w+ 22:10$/);
+  });
+});
 
 describe('num', () => {
   it('groups thousands in English regardless of the host locale', () => {

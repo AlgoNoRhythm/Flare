@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ago, num } from '../format';
+import { agentIdOf, agentLabelOf, type Conflict } from '../../shared/conflicts';
+import type { Decision, Question } from '../../shared/tasks';
+import { BurstStrip, type BurstRange } from './BurstStrip';
+import { Splitter } from './Splitter';
 import type { ChangeBurst, VerificationState } from '../../shared/activity';
-import { VERIFICATION_HINT, VERIFICATION_LABEL } from '../../shared/activity';
+import { VERIFICATION_HINT, VERIFICATION_LABEL, VERIFY_TONE } from '../../shared/activity';
 import type { Insights } from '../../shared/insights';
 import {
   TIER_HINT,
@@ -25,6 +29,18 @@ import { agentColor } from '../graph/lenses';
  * file diff view cannot: what was it trying to do, did anything check it, and
  * which of these files actually deserve my attention. One card per change
  * burst, worst-first.
+ *
+ * It is a map and a ledger, side by side. The map is the graph filtered to
+ * what the session touched, with the selected change lit — the biggest
+ * weakness of a review cockpit in a graph-first IDE was that it was a *list*,
+ * so a 30-file change arrived as 30 rows with no shape. The ledger keeps the
+ * detail the map cannot carry: intent, evidence, the reason each file is
+ * tiered where it is.
+ *
+ * Both sides collapse, and the divider between them is draggable, because
+ * which of the two you want is a question about the change rather than a
+ * preference: a rename across forty files is all shape, and a two-line fix to
+ * something load-bearing is all reasons.
  */
 
 interface Props {
@@ -46,16 +62,26 @@ interface Props {
   /** a file a risky-change alert asked to be taken to */
   focusPath?: string | null;
   onFocusHandled?(): void;
-}
 
-const VERIFY_TONE: Record<VerificationState, 'good' | 'warn' | 'crit' | 'muted'> = {
-  passed: 'good',
-  failed: 'crit',
-  'not-run': 'crit',
-  stale: 'warn',
-  unknown: 'warn',
-  running: 'muted',
-};
+  // ---- the time machine, and the map it drives ----
+  /** the burst subgraph. The app owns the graph, so it renders it and we place it. */
+  subgraph?: ReactNode;
+  conflicts: readonly Conflict[];
+  decisions: readonly Decision[];
+  questions: readonly Question[];
+  /** which moment is being shown; null means pinned to the newest */
+  selectedBurstId: string | null;
+  /** a span of the session, when one has been dragged out or handed in */
+  range: BurstRange | null;
+  onRange(range: BurstRange | null): void;
+  /** the map shows everything up to the selected change, not just it */
+  cumulative: boolean;
+  /** an agent is writing right now */
+  writing: boolean;
+  onSelectBurst(id: string | null): void;
+  onToggleCumulative(): void;
+  onOpenConflict(conflict: Conflict): void;
+}
 
 const SEV_ICON = { critical: '●', warning: '⚠︎', info: 'ℹ︎' } as const;
 /** Resolved per render: a module-level hex keeps whichever theme loaded first. */
@@ -90,10 +116,40 @@ export function ReviewPanel({
   onBackToGreen,
   focusPath = null,
   onFocusHandled,
+  subgraph,
+  conflicts,
+  decisions,
+  questions,
+  selectedBurstId,
+  range,
+  onRange,
+  cumulative,
+  writing,
+  onSelectBurst,
+  onToggleCumulative,
+  onOpenConflict,
 }: Props) {
   const newest = bursts.length > 0 ? bursts[bursts.length - 1].id : null;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(newest ? [newest] : []));
   const [onlyProblems, setOnlyProblems] = useState(false);
+
+  /*
+   * Which of the two halves is showing.
+   *
+   * Collapsing one gives the other the whole panel — the map alone is the
+   * useful state often enough to be one click away, and the ledger alone is
+   * exactly what this panel was before the map existed.
+   */
+  const [mapCollapsed, setMapCollapsed] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const [mapWidth, setMapWidth] = useState(0.56);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const dragSplit = useCallback((clientX: number) => {
+    const box = bodyRef.current?.getBoundingClientRect();
+    if (!box || box.width === 0) return;
+    setMapWidth(Math.min(0.85, Math.max(0.2, (clientX - box.left) / box.width)));
+  }, []);
 
   /*
    * Open the newest burst whenever one arrives, not only on mount.
@@ -141,6 +197,23 @@ export function ReviewPanel({
       clearTimeout(timer);
     };
   }, [focusPath, bursts, onFocusHandled]);
+
+  /*
+   * The strip and the list are two views of one selection, so moving either
+   * moves the other. Stepping the time machine to a change and then having to
+   * find that change in the list underneath would make them two navigations
+   * for one question.
+   */
+  useEffect(() => {
+    if (!selectedBurstId) return;
+    setExpanded((prev) => (prev.has(selectedBurstId) ? prev : new Set([...prev, selectedBurstId])));
+    const frame = requestAnimationFrame(() => {
+      rootRef.current
+        ?.querySelector(`[data-testid="burst-${selectedBurstId}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedBurstId]);
 
   const metrics = useMemo(() => {
     const map = new Map<string, Insights['files'][number]>();
@@ -212,8 +285,30 @@ export function ReviewPanel({
         means deciding what to keep: <b>dismiss</b> clears the marker and changes nothing, <b>revert</b> puts
         the files back.
       </div>
+      {/*
+        The strip takes the leading position and the counts move right of the
+        spacer, giving up their labels for tooltips: the three stat blocks were
+        spending most of this bar's width to say what the ticks now show as a
+        shape, and the bar has to hold both.
+      */}
       <div className="review-head">
-        <div className="review-head-stats">
+        <BurstStrip
+          bursts={bursts}
+          conflicts={conflicts}
+          decisions={decisions}
+          questions={questions}
+          lastGreen={lastGreen}
+          selectedBurstId={selectedBurstId}
+          range={range}
+          cumulative={cumulative}
+          writing={writing}
+          onSelect={onSelectBurst}
+          onRange={onRange}
+          onToggleCumulative={onToggleCumulative}
+          onOpenConflict={onOpenConflict}
+        />
+        <span className="spacer" />
+        <div className="review-head-stats compact">
           {/* "unverified" and "smell" are this app's words, so each count says
               what it counts rather than assuming the vocabulary */}
           <span className="rh-stat" title="Bursts of edits this session. Files written close together are grouped into one change.">
@@ -235,7 +330,6 @@ export function ReviewPanel({
             <span className="rh-label">smell{smellCount === 1 ? '' : 's'}</span>
           </span>
         </div>
-        <span className="spacer" />
         <label className="review-toggle" title="hide bursts that passed their checks and look clean">
           <input
             type="checkbox"
@@ -250,7 +344,7 @@ export function ReviewPanel({
           disabled={!lastGreen}
           title={
             lastGreen
-              ? `Restore every file to the last state whose tests passed (${ago(lastGreen.at)}). A snapshot is taken first, so this is undoable.`
+              ? `Restore every file to the last state whose tests passed (${ago(lastGreen.at)}) — the ⚑︎ on the strip. A snapshot is taken first, so this is undoable.`
               : 'No verified-green state has been recorded yet this session'
           }
           onClick={onBackToGreen}
@@ -260,6 +354,51 @@ export function ReviewPanel({
         </button>
       </div>
 
+      <div className="review-body" ref={bodyRef} data-testid="review-body">
+        {subgraph && (
+          <div
+            className={`review-map${mapCollapsed ? ' collapsed' : ''}`}
+            data-testid="review-map"
+            style={mapCollapsed || listCollapsed ? undefined : { flexBasis: `${mapWidth * 100}%` }}
+          >
+            <button
+              className="pane-collapse"
+              data-testid="review-map-collapse"
+              title={mapCollapsed ? 'Show the map of this change' : 'Hide the map and give the panel to the list'}
+              aria-expanded={!mapCollapsed}
+              onClick={() => {
+                setMapCollapsed((v) => !v);
+                if (mapCollapsed) setListCollapsed(false);
+              }}
+            >
+              {mapCollapsed ? '▸' : '▾'} map
+            </button>
+            {!mapCollapsed && <div className="review-map-body">{subgraph}</div>}
+          </div>
+        )}
+
+        {subgraph && !mapCollapsed && !listCollapsed && (
+          <Splitter direction="horizontal" onDrag={dragSplit} />
+        )}
+
+        <div className={`review-side${listCollapsed ? ' collapsed' : ''}`} data-testid="review-side">
+          <button
+            className="pane-collapse"
+            data-testid="review-list-collapse"
+            title={
+              listCollapsed
+                ? 'Show the change list again'
+                : 'Hide the list and give the panel to the map'
+            }
+            aria-expanded={!listCollapsed}
+            onClick={() => {
+              setListCollapsed((v) => !v);
+              if (listCollapsed) setMapCollapsed(false);
+            }}
+          >
+            {listCollapsed ? '◂' : '▾'} {listCollapsed ? '' : 'changes'}
+          </button>
+          {!listCollapsed && (
       <div className="review-list">
         {visible.length === 0 && (
           <div className="issues-empty">
@@ -288,8 +427,11 @@ export function ReviewPanel({
                 }
               >
                 <span className="burst-caret">{open ? '▾' : '▸'}</span>
-                <span className="burst-agent" style={{ color: agentColor(burst.agent) }}>
-                  {burst.agent}
+                {/* the label, not the tool: the strip beside it says "Add OAuth",
+                    and a row underneath saying "agent" for the same change reads
+                    as two different authors */}
+                <span className="burst-agent" style={{ color: agentColor(agentIdOf(burst)) }}>
+                  {agentLabelOf(burst)}
                 </span>
                 <span className="burst-files">
                   {files} file{files === 1 ? '' : 's'}
@@ -495,6 +637,9 @@ export function ReviewPanel({
             </div>
           );
         })}
+      </div>
+          )}
+        </div>
       </div>
     </div>
   );

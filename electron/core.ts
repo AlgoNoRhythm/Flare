@@ -38,6 +38,17 @@ export interface Settings {
   /** older builds wrote bare strings; both shapes are read */
   recents?: (string | RecentEntry)[];
   bounds?: { x: number; y: number; width: number; height: number };
+  /**
+   * Whether a human ever chose those bounds.
+   *
+   * Bounds are saved on every close, so an untouched window persists whatever
+   * the default happened to be when it was first opened — and that stale
+   * default then outranks every later one, which is how a size cap removed in
+   * one version goes on applying forever. Absent on settings written before
+   * this existed, which is read as "not chosen" so those windows pick up the
+   * current default once and then keep whatever you do to them.
+   */
+  boundsUserSet?: boolean;
   maximized?: boolean;
 }
 
@@ -190,7 +201,14 @@ export function createCore(options: CoreOptions): Core {
   function syncHeartbeat(board: Board): void {
     if (!session || !mcpServer.slug) return;
     try {
-      syncStopHook(session.root, board.routine?.heartbeat === true, mcpServer.publicPort, mcpServer.slug);
+      // only the stop-hook mode writes into the project; 'timer' and 'off'
+      // must both leave .claude/settings.local.json alone
+      syncStopHook(
+        session.root,
+        board.routine?.heartbeat === 'stop-hook',
+        mcpServer.publicPort,
+        mcpServer.slug,
+      );
     } catch {
       // a settings file that cannot be written is the user's business — it
       // must not take the board edit down with it
@@ -214,7 +232,7 @@ export function createCore(options: CoreOptions): Core {
         onEvent('evt:board', board);
       },
     });
-    session.attributionProvider = () => agentMonitor.attribution();
+    session.attributionProvider = () => agentMonitor.attributionDetail();
     const info = await session.open();
     const previous = normaliseRecents(loadSettings().recents).filter((r) => r.path !== root);
     const recents: RecentEntry[] = [{ path: root, openedAt: Date.now() }, ...previous].slice(0, 12);
@@ -358,6 +376,7 @@ export function createCore(options: CoreOptions): Core {
     return true;
   });
   on('activity:lastGreen', () => session?.lastGreenSnapshot() ?? null);
+  on('activity:edits', () => session?.getBurstEdits() ?? []);
   on('board:get', () => session?.getBoard() ?? null);
   on('board:set', (board: Board) => {
     session?.setBoard(board);

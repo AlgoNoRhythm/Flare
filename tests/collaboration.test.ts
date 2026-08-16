@@ -133,7 +133,9 @@ describe('the working agreement', () => {
     recheckBoard: true,
     decisions: 'flag' as const,
     parkQuestions: true,
-    heartbeat: false,
+    heartbeat: 'off' as const,
+  heartbeatEvery: 600_000,
+  heartbeatCommand: '',
     notes: '',
     text: '',
   };
@@ -196,7 +198,7 @@ describe('the working agreement', () => {
    */
   it('warns that the board answers back when it tries to stop', () => {
     expect(formatRoutineForAgent(setRoutine(emptyBoard(), routine))).not.toContain('when you try to stop');
-    const beating = formatRoutineForAgent(setRoutine(emptyBoard(), { ...routine, heartbeat: true }));
+    const beating = formatRoutineForAgent(setRoutine(emptyBoard(), { ...routine, heartbeat: 'stop-hook' as const }));
     expect(beating).toContain('when you try to stop');
   });
 

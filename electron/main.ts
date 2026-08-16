@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, screen, shell } from 'electron';
+import { initialBounds as computeBounds } from './services/windowBounds';
 import { createCore, type Core } from './core';
 import type { EventChannel } from '../shared/channels';
 
@@ -27,46 +28,15 @@ function send(channel: EventChannel, payload: unknown): void {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
-/**
- * Where the window should open.
- *
- * A remembered size is only useful if it still fits: monitors get unplugged,
- * resolutions change, and a window restored at 1680x1000 onto a 1366x768
- * laptop opens with its controls off-screen. So the saved bounds are checked
- * against the displays that exist *now*, and anything that no longer fits
- * falls back to a centred default sized to the work area.
- */
+/** Where the window should open — the rules live in services/windowBounds. */
 function initialBounds(): { x?: number; y?: number; width: number; height: number } {
-  const work = screen.getPrimaryDisplay().workAreaSize;
-  const saved = core?.settings.get().bounds;
-  if (saved && saved.width > 0 && saved.height > 0) {
-    const visible = screen.getAllDisplays().some((display) => {
-      const a = display.workArea;
-      // at least a title-bar-sized corner has to land on a real display
-      return (
-        saved.x + saved.width > a.x + 80 &&
-        saved.x < a.x + a.width - 80 &&
-        saved.y + 40 > a.y &&
-        saved.y < a.y + a.height - 40
-      );
-    });
-    if (visible) {
-      return {
-        x: saved.x,
-        y: saved.y,
-        width: Math.min(saved.width, work.width),
-        height: Math.min(saved.height, work.height),
-      };
-    }
-  }
-  // First run: fill the screen bar a margin. The graph is the reason this app
-  // exists and it is the thing that suffers first when the window is small, so
-  // the default errs large; the caps only matter on very wide monitors, where
-  // a full-width window would stretch the canvas past comfortable reading.
-  return {
-    width: Math.min(2400, Math.round(work.width * 0.97)),
-    height: Math.min(1500, Math.round(work.height * 0.97)),
-  };
+  const settings = core?.settings.get();
+  return computeBounds({
+    work: screen.getPrimaryDisplay().workAreaSize,
+    displays: screen.getAllDisplays().map((d) => d.workArea),
+    saved: settings?.bounds,
+    userSet: settings?.boundsUserSet,
+  });
 }
 
 function createWindow(): void {
@@ -102,6 +72,19 @@ function createWindow(): void {
   win.once('ready-to-show', () => win?.show());
   win.on('maximize', () => send('evt:windowState', { maximized: true }));
   win.on('unmaximize', () => send('evt:windowState', { maximized: false }));
+  /*
+   * The moment the size stops being ours and starts being yours.
+   *
+   * `resized` and `moved` are the user-driven events — plain `resize` also
+   * fires for our own `maximize()` call, which would mark a window nobody
+   * touched as deliberately sized. Written once; after that the remembered
+   * bounds outrank whatever the default of the day is.
+   */
+  const claimBounds = (): void => {
+    if (!core?.settings.get().boundsUserSet) core?.settings.set({ boundsUserSet: true });
+  };
+  win.on('resized', claimBounds);
+  win.on('moved', claimBounds);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   if (process.env.FLARE_DEV_URL) {

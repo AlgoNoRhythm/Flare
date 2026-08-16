@@ -188,24 +188,34 @@ test('shadow timeline records snapshots and restores a file', async () => {
 
   const target = path.join(fixture, 'src', 'util.ts');
   const before = fs.readFileSync(target, 'utf8');
-  fs.writeFileSync(target, before + '\nexport const clobbered = true;\n');
-  // wait for the change snapshot to land
-  await expect(page.getByTestId('unreviewed-badge')).toBeVisible();
-  await expect
-    .poll(async () => fs.readFileSync(target, 'utf8').includes('clobbered'), { timeout: 5000 })
-    .toBe(true);
 
-  // details panel -> local history -> revert to the snapshot before the clobber
+  // open the file's history *first*, so the pre-clobber snapshot count is known
   await page.getByTestId('search-input').fill('util.ts');
   await page.getByTestId('search-input').press('Enter');
   await page.getByTestId('search-input').fill('');
   await expect(page.getByTestId('details-panel')).toContainText('Local history');
   const revertLinks = page.getByTestId('details-panel').getByText('revert to this');
   await expect(revertLinks.first()).toBeVisible({ timeout: 20_000 });
-  const count = await revertLinks.count();
-  expect(count).toBeGreaterThanOrEqual(1);
-  // links are newest-first; pick the one before the clobber snapshot if present
-  await revertLinks.nth(Math.min(1, count - 1)).click();
+  const wasCount = await revertLinks.count();
+
+  fs.writeFileSync(target, before + '\nexport const clobbered = true;\n');
+  await expect(page.getByTestId('unreviewed-badge')).toBeVisible();
+  await expect
+    .poll(async () => fs.readFileSync(target, 'utf8').includes('clobbered'), { timeout: 5000 })
+    .toBe(true);
+
+  /*
+   * Wait for the clobber's own snapshot before picking one to revert to.
+   *
+   * This used to read the count and click `nth(min(1, count - 1))` on the
+   * assumption that the newest entry was the clobber — but the snapshot is
+   * taken on a debounce, so the list was often still one short and index 1
+   * pointed at a state that already contained the clobber. Waiting for the
+   * count to grow is what makes index 0 the clobber and index 1 the state
+   * before it, which is the whole point of the assertion below.
+   */
+  await expect.poll(() => revertLinks.count(), { timeout: 20_000 }).toBeGreaterThan(wasCount);
+  await revertLinks.nth(1).click();
   await expect
     .poll(async () => fs.readFileSync(target, 'utf8').includes('clobbered'), { timeout: 10_000 })
     .toBe(false);
@@ -393,16 +403,41 @@ test('canvas, wheel and districts views all render the same graph', async () => 
 
 test('the view explains itself: lens reading, zoom readout, centre, cheat sheet', async () => {
   await page.getByTestId('tab-graph').click();
-  // every lens says how to read its colours, with a matching scale
+  /*
+   * The strip carries the name and the scale; the prose is behind the ⓘ.
+   *
+   * Asserted with `useInnerText` throughout, because the explanation is still
+   * in the DOM inside the popover — a plain toContainText reads textContent
+   * and would pass whether or not any of this is visible, which is how a test
+   * goes on looking green after it has stopped testing anything.
+   */
   await page.getByTestId('lens-risk').click();
-  await expect(page.getByTestId('lens-reading')).toContainText('Risk');
-  await expect(page.getByTestId('lens-reading')).toContainText('blast radius');
+  await expect(page.getByTestId('lens-reading')).toContainText('Risk', { useInnerText: true });
+  await expect(page.getByTestId('lens-reading')).not.toContainText('blast radius', {
+    useInnerText: true,
+  });
   await expect(page.getByTestId('lens-scale')).toBeVisible();
+
+  // …and one hover surfaces it
+  await page.getByTestId('lens-info').hover();
+  await expect(page.locator('.lens-info-pop')).toBeVisible();
+  await expect(page.locator('.lens-info-pop')).toContainText('blast radius');
+  await page.getByTestId('lens-scale').hover();
+  await expect(page.locator('.lens-info-pop')).toBeHidden();
+
   await page.getByTestId('lens-instability').click();
-  await expect(page.getByTestId('lens-reading')).toContainText('foundations');
-  // the fixture has no test files yet, so this lens explains its own silence
+  await page.getByTestId('lens-info').hover();
+  await expect(page.locator('.lens-info-pop')).toContainText('foundations');
+
+  /*
+   * A lens with nothing to colour keeps its note *inline*. That is not an
+   * explanation of the lens — it is a fact about this repo, and the reason
+   * there is no scale beside it, so hiding it would leave an empty legend.
+   */
   await page.getByTestId('lens-tests').click();
-  await expect(page.getByTestId('lens-reading')).toContainText('No test imports any file');
+  await expect(page.getByTestId('lens-reading')).toContainText('No test imports any file', {
+    useInnerText: true,
+  });
   await page.getByTestId('lens-clusters').click();
 
   // zoom controls report where they landed
@@ -1094,7 +1129,11 @@ test('the heartbeat installs a stop hook and answers it from the board', async (
 
   await page.getByTestId('tab-board').click();
   await page.getByTestId('board-routine').click();
-  await page.getByTestId('routine-heartbeat').click();
+  // one setting, three values: switching it on picks the stop hook, and the
+  // timer is the other radio rather than a second switch that could also be on
+  await page.getByTestId('routine-heartbeat-on').click();
+  await expect(page.getByTestId('routine-heartbeat-stop-hook')).toBeVisible();
+  await expect(page.getByTestId('routine-heartbeat-timer')).toBeVisible();
   await page.getByTestId('routine-next').click();
   await expect(page.getByTestId('routine-preview')).toContainText('when you try to stop');
   await page.getByTestId('routine-save').click();
@@ -1148,9 +1187,20 @@ test('the heartbeat installs a stop hook and answers it from the board', async (
   expect(offered.size).toBeGreaterThan(0);
   expect(await stopHook()).not.toHaveProperty('decision');
 
-  // switching it back off takes the hook out of the project again
+  // choosing the timer instead takes the hook out of the project: the two
+  // mechanisms are exclusive, so picking one is switching the other off
   await page.getByTestId('board-routine').click();
-  await page.getByTestId('routine-heartbeat').click();
+  await page.getByTestId('routine-heartbeat-timer').click();
+  await page.getByTestId('routine-next').click();
+  await page.getByTestId('routine-save').click();
+  await expect
+    .poll(() => JSON.parse(fs.readFileSync(settings, 'utf8')).hooks?.Stop ?? null, { timeout: 5000 })
+    .toBe(null);
+  expect(await stopHook()).not.toHaveProperty('decision');
+
+  // and switching the whole thing off leaves nothing behind either
+  await page.getByTestId('board-routine').click();
+  await page.getByTestId('routine-heartbeat-on').click();
   await page.getByTestId('routine-next').click();
   await page.getByTestId('routine-save').click();
   await expect
@@ -1406,9 +1456,10 @@ test('reuse: the metric, the lens and the blockers agree with each other', async
   await expect(page.getByTestId('reuse-score')).toContainText('100/100');
   await expect(page.getByTestId('reuse-score')).toContainText('self-contained');
 
-  // the lens exists and says how to read itself
+  // the lens exists and says how to read itself, behind its ⓘ
   await page.getByTestId('lens-reuse').click();
-  await expect(page.getByTestId('lens-reading')).toContainText('come out as a package');
+  await page.getByTestId('lens-info').hover();
+  await expect(page.locator('.lens-info-pop')).toContainText('come out as a package');
   await page.getByTestId('lens-clusters').click();
 });
 
@@ -1425,23 +1476,42 @@ test('a file welded to the host scores low and names what welds it', async () =>
   await expect(cell.locator('span')).toHaveAttribute('title', /fs/);
 });
 
-test('a task can be edited from the card, and Save is not where Delete was', async () => {
+test('a task opens at full size, and Save is not where Delete was', async () => {
   await page.getByTestId('tab-board').click();
   const card = page.locator('.task-card').first();
   const id = (await card.getAttribute('data-testid'))!.replace('task-', '');
 
-  // editing used to be reachable only by clicking the title, undiscoverably
+  // editing used to be reachable only by clicking the title, undiscoverably —
+  // and then happened inside a 240px lane, which is not a size you can read a
+  // brief or a progress log at
   await page.getByTestId(`task-edit-${id}`).click();
+  await expect(page.getByTestId('task-modal')).toBeVisible();
   await expect(page.getByTestId('task-title-input')).toBeVisible();
 
   // the destructive action is at the far end from the primary one
-  const actions = page.locator('.task-card.editing .task-actions button');
+  const actions = page.locator('.task-modal .task-actions button');
   await expect(actions.first()).toHaveText('Delete');
   await expect(actions.last()).toHaveText('Save');
 
   await page.getByTestId('task-title-input').fill('Edited from the button');
   await page.getByTestId('task-save').click();
+  await expect(page.getByTestId('task-modal')).toHaveCount(0);
   await expect(page.locator('.task-card').first()).toContainText('Edited from the button');
+});
+
+test('the whole card opens the task, and Escape leaves it alone', async () => {
+  await page.getByTestId('tab-board').click();
+  const card = page.locator('.task-card').first();
+  const before = await card.locator('.task-title-text').innerText();
+
+  await card.dblclick();
+  await expect(page.getByTestId('task-modal')).toBeVisible();
+
+  // a typed-then-abandoned edit must not survive: the card is the truth
+  await page.getByTestId('task-title-input').fill('Abandoned');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('task-modal')).toHaveCount(0);
+  await expect(page.locator('.task-card').first().locator('.task-title-text')).toHaveText(before);
 });
 
 test('a selected node offers to start a task on it', async () => {
@@ -1456,6 +1526,29 @@ test('a selected node offers to start a task on it', async () => {
   // the new card is the one carrying the file we selected
   await expect(page.locator('.task-card').first()).toContainText('util.ts');
 });
+
+/**
+ * Delete a temp folder, and do not fail the test if Windows will not yet.
+ *
+ * A folder the app has had open is still held by its watcher for a moment
+ * after the project is closed, and `rmSync` answers EPERM — which failed the
+ * test *after* every assertion in it had already passed. Cleaning up is not
+ * the thing under test, so it retries briefly and then leaves it to the OS.
+ */
+function removeTemp(dir: string): void {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch {
+      // a handle is still open; give it a moment
+      const until = Date.now() + 200;
+      while (Date.now() < until) {
+        /* spin: this is teardown, and the alternative is failing on it */
+      }
+    }
+  }
+}
 
 test('New Project creates the folder and opens it', async () => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-new-'));
@@ -1489,7 +1582,7 @@ test('New Project creates the folder and opens it', async () => {
     await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture), {
       timeout: 30_000,
     });
-    fs.rmSync(parent, { recursive: true, force: true });
+    removeTemp(parent);
   }
 });
 

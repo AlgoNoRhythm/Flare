@@ -6,7 +6,6 @@ import { emptyBoard, normalizeBoard, type Board } from '../../shared/tasks';
 
 export interface UiState {
   tabs?: { kind: 'file' | 'diff'; path: string }[];
-  activeTab?: string;
   lens?: string;
   graphView?: string;
   sidebarWidth?: number;
@@ -16,6 +15,24 @@ export interface UiState {
   selectMode?: boolean;
   /** the folder chips are put away */
   legendCollapsed?: boolean;
+  /**
+   * Epoch ms at which this project was last open in front of a human.
+   *
+   * Kept so the next open can tell "you have been gone all night and four
+   * agents worked" from "you switched windows for a minute" — see
+   * shared/briefing.ts. Written on a timer while the window has focus, so a
+   * crash loses at most one interval rather than the whole session.
+   */
+  lastSeenAt?: number;
+  /**
+   * The heartbeat's timer half: what is sent to a terminal gone quiet.
+   *
+   * Per project, because the default names this project's own MCP endpoint —
+   * and because whether you want an agent restarted unattended is a fact about
+   * the work, not about the machine. The other half, the stop hook, lives in
+   * the board's routine; shared/heartbeat.ts decides which of them is live.
+   */
+  heartbeat?: { enabled: boolean; everyMs: number; command: string };
 }
 
 export interface ProjectState {

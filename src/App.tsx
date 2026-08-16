@@ -26,7 +26,9 @@ import { DiffPane } from './components/DiffPane';
 import { EditorPane } from './components/EditorPane';
 import { DocumentPane } from './components/DocumentPane';
 import { previewKindFor } from '../shared/preview';
-import { plural } from './format';
+import { plural, when } from './format';
+import { clampTerminal } from './layout';
+
 import { FileTree, type FileTreeHandle } from './components/FileTree';
 import {
   CanvasView,
@@ -61,6 +63,10 @@ import { ContextMenu, Modal, type MenuItem, type ModalRequest } from './componen
 import { Toasts, toast } from './components/Toasts';
 import { RiskAlerts } from './components/RiskAlerts';
 import { riskAlerts, type RiskAlert } from '../shared/riskAlerts';
+import { conflicts, dependentsMap, type BurstEdit, type Conflict } from '../shared/conflicts';
+import type { BurstRange } from './components/BurstStrip';
+import { briefing, shouldBrief, type BriefingRow } from '../shared/briefing';
+import { Briefing } from './components/Briefing';
 import { baseSnapshotFor } from '../shared/review';
 import { LENSES, riskScore, type Lens } from './graph/lenses';
 import { THEMES, applyTheme, currentTheme, onThemeChange, storedChoice, type ThemeChoice, type ThemeName } from './theme';
@@ -130,6 +136,19 @@ interface Tab {
 
 type GraphViewKind = 'canvas' | 'wheel' | 'districts';
 
+/*
+ * Stable empties for the review map.
+ *
+ * It is a second instance of the same canvas, and the things the main graph
+ * lets you do to the *layout* — collapsing directories, drilling into symbols,
+ * filtering by search — do not belong to it: it is showing one change, and its
+ * node set is chosen for it. Fresh objects here would relayout the map on
+ * every render of the app.
+ */
+const EMPTY_SET: ReadonlySet<string> = new Set();
+const EMPTY_SYMBOLS: ReadonlyMap<string, SymbolGraph> = new Map();
+const noopStats = (): void => {};
+
 function edgeMapKey(e: GraphEdge): string {
   return `${e.source}\n${e.target}`;
 }
@@ -179,6 +198,33 @@ export function App() {
   const [externalVersions, setExternalVersions] = useState<Record<string, number>>({});
   const [pendingLine, setPendingLine] = useState<Record<string, number>>({});
   const [showTimeline, setShowTimeline] = useState(false);
+  /*
+   * The time machine's position.
+   *
+   * `null` is not "nothing selected" — it is *pinned to live*, which is a
+   * different state from "the newest burst happens to be selected": while it
+   * holds, a new burst drags the view along with it, and stepping off it
+   * stops that. Reading a change from four hours ago while an agent saves
+   * every few seconds is impossible otherwise.
+   */
+  const [selectedBurstId, setSelectedBurstId] = useState<string | null>(null);
+  const [burstCumulative, setBurstCumulative] = useState(false);
+  /** a span of the session — dragged across the strip, or handed in by the briefing */
+  const [burstRange, setBurstRange] = useState<BurstRange | null>(null);
+  const [burstEdits, setBurstEdits] = useState<BurstEdit[]>([]);
+  /**
+   * When this project was last open in front of you, and whether to say so.
+   *
+   * `lastSeenAt` is read once at open, *before* the presence heartbeat starts
+   * overwriting it — it is the mark the briefing measures from. `briefingOpen`
+   * is separate because the briefing has to survive the mark moving: the
+   * heartbeat fires a minute later and the answer must not change underneath
+   * someone who is still reading it.
+   */
+  const [lastSeenAt, setLastSeenAt] = useState(0);
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  /** bumped while the window has focus, so the presence mark stays current */
+  const [presenceTick, setPresenceTick] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [graphVersion, setGraphVersion] = useState(0);
   const [stats, setStats] = useState<GraphStats>({ nodes: 0, edges: 0, clusters: [] });
@@ -211,6 +257,13 @@ export function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [recents, setRecents] = useState<RecentEntry[]>([]);
   const [mcpInfo, setMcpInfo] = useState<{ port: number; slug: string | null }>({ port: 0, slug: null });
+  /**
+   * Taking someone to the Routine, which is where the heartbeat is set.
+   *
+   * A counter rather than a boolean so asking twice reopens it — the terminal
+   * bar's chip and the panel's own button are two doors to one wizard.
+   */
+  const [routineNonce, setRoutineNonce] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(216);
   const [detailsWidth, setDetailsWidth] = useState(320);
   // The terminal takes a share of the window rather than a fixed 280px, so a
@@ -287,6 +340,9 @@ export function App() {
     setDismissedAlerts(new Set());
     setReviewFocus(null);
     void api.activityGet().then(setBursts);
+    void api.activityEdits().then(setBurstEdits);
+    setSelectedBurstId(null);
+    setBurstRange(null);
     void api.boardGet().then((b) => b && setBoard(b));
     void api.activityLastGreen().then(setLastGreen);
     void api.coverageGet().then(setCoverage);
@@ -294,6 +350,9 @@ export function App() {
     void api.mcpInfo().then(setMcpInfo);
     // restore the previous session's workspace state for this project
     void api.uiLoad().then((ui) => {
+      // captured before the presence heartbeat overwrites it — this is the
+      // moment the briefing measures "while you were away" from
+      setLastSeenAt(ui.lastSeenAt ?? 0);
       if (ui.lens) setLens(ui.lens as Lens);
       if (typeof ui.selectMode === 'boolean') setSelectMode(ui.selectMode);
       if (typeof ui.legendCollapsed === 'boolean') setLegendCollapsed(ui.legendCollapsed);
@@ -301,23 +360,33 @@ export function App() {
         setGraphView(ui.graphView);
       }
       if (ui.sidebarWidth) setSidebarWidth(ui.sidebarWidth);
-      if (ui.terminalHeight) setTerminalHeight(ui.terminalHeight);
+      /*
+       * A restored height is a number from another window.
+       *
+       * The splitter clamps while you drag it, but nothing clamped what came
+       * back off disk — so a terminal sized on a maximised 4K window reopened
+       * at laptop size covered the entire workspace, and the first thing a
+       * graph-first IDE showed you was a shell. The graph keeps a floor
+       * whatever the stored number says.
+       */
+      if (ui.terminalHeight) setTerminalHeight(clampTerminal(ui.terminalHeight, window.innerHeight));
       if (ui.detailsWidth) setDetailsWidth(ui.detailsWidth);
+      /*
+       * Restore the tabs you had open, but always land on the graph.
+       *
+       * Restoring the *active* one meant that ending a session in the Control
+       * panel or the review cockpit made those the first thing the next
+       * session showed — so opening a project in a graph-first IDE could put
+       * you anywhere except the graph. The map is the home surface and every
+       * one of those panels is a view about it; they are one click away, and
+       * the files you left open are still in the tab bar.
+       */
       if (ui.tabs && ui.tabs.length > 0) {
-        const restored = ui.tabs
-          .filter((t) => t.kind === 'file')
-          .map((t) => ({ key: `file:${t.path}`, kind: 'file' as const, path: t.path }));
-        setTabs(restored);
-        if (
-          ui.activeTab &&
-          (ui.activeTab === 'graph' ||
-            ui.activeTab === 'insights' ||
-            ui.activeTab === 'review' ||
-            ui.activeTab === 'board' ||
-            restored.some((t) => t.key === ui.activeTab))
-        ) {
-          setActiveTab(ui.activeTab);
-        }
+        setTabs(
+          ui.tabs
+            .filter((t) => t.kind === 'file')
+            .map((t) => ({ key: `file:${t.path}`, kind: 'file' as const, path: t.path })),
+        );
       }
     });
   }, []);
@@ -382,6 +451,7 @@ export function App() {
       api.on('evt:activity', (payload) => {
         setBursts([...(payload as ChangeBurst[])]);
         void api.activityLastGreen().then(setLastGreen);
+        void api.activityEdits().then(setBurstEdits);
       }),
       api.on('evt:commandUpdate', (payload) => {
         const updated = payload as CommandLogEntry;
@@ -410,7 +480,6 @@ export function App() {
     const timer = setTimeout(() => {
       void api.uiSave({
         tabs: tabs.map((t) => ({ kind: t.kind, path: t.path })),
-        activeTab,
         lens,
         graphView,
         sidebarWidth,
@@ -418,10 +487,35 @@ export function App() {
         detailsWidth,
         selectMode,
         legendCollapsed,
+        // stamped on every save so the mark stays fresh while you are here;
+        // the briefing reads the *previous* one, captured at open
+        lastSeenAt: Date.now(),
       });
     }, 800);
     return () => clearTimeout(timer);
-  }, [project, tabs, activeTab, lens, graphView, sidebarWidth, terminalHeight, detailsWidth, selectMode, legendCollapsed]);
+  }, [project, tabs, lens, graphView, sidebarWidth, terminalHeight, detailsWidth, selectMode, legendCollapsed, presenceTick]);
+
+  /*
+   * Presence, not uptime.
+   *
+   * The mark has to mean "a human was looking at this", so it only advances
+   * while the window has focus — an app left open on a second monitor all
+   * night should still produce a briefing in the morning. Ticking drives the
+   * save effect above rather than writing separately, so there is still one
+   * place that knows the shape of the UI state.
+   */
+  useEffect(() => {
+    if (!project) return;
+    const beat = () => {
+      if (document.hasFocus()) setPresenceTick((t) => t + 1);
+    };
+    const timer = setInterval(beat, 60_000);
+    window.addEventListener('focus', beat);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', beat);
+    };
+  }, [project]);
 
   // ---------- insights: metrics + issues + alerts ----------
   useEffect(() => {
@@ -477,6 +571,133 @@ export function App() {
     [bursts, insights, reviewInfo, dismissedAlerts],
   );
 
+  /**
+   * Where two agents got in each other's way.
+   *
+   * Derived like the alerts next door, and for the same reason: a crossing
+   * that stops being true — one side reverted, the decision agreed — should
+   * leave on its own rather than needing to be cleaned up.
+   */
+  const crossings = useMemo(() => {
+    const touched = new Set<string>();
+    for (const b of bursts) for (const p of b.changed) touched.add(p);
+    return conflicts({
+      bursts,
+      metrics: new Map((insights?.files ?? []).map((f) => [f.path, f])),
+      dependents: dependentsMap([...fullEdgesRef.current.values()], touched),
+      edits: burstEdits,
+      // only the touched files: the duplicate detector pairs *new* files, and
+      // handing it the whole repo's symbol tables to filter down to four of
+      // them would rebuild a map of every export on every burst
+      nodes: new Map(
+        [...touched].flatMap((path) => {
+          const node = fullNodesRef.current.get(path);
+          if (!node) return [];
+          return [
+            [
+              path,
+              {
+                exports: node.symbols.filter((s) => s.exported).map((s) => s.name),
+                fanIn: node.inDegree,
+              },
+            ] as const,
+          ];
+        }),
+      ),
+      decisions: board.decisions,
+    });
+  }, [bursts, insights, burstEdits, board.decisions, graphVersion]);
+
+  /**
+   * What happened while you were away.
+   *
+   * Derived from the mark taken at open, so it stays the same story for as
+   * long as it is on screen. `briefingOpen` is what decides whether it shows —
+   * this only decides what it would say.
+   */
+  const nightBriefing = useMemo(
+    () =>
+      briefing({
+        since: lastSeenAt,
+        bursts,
+        conflicts: crossings,
+        questions: board.questions,
+        decisions: board.decisions,
+      }),
+    [lastSeenAt, bursts, crossings, board.questions, board.decisions],
+  );
+
+  /*
+   * Raise it once, on arrival, and never again for the same absence.
+   *
+   * It waits for the first activity payload rather than firing on open,
+   * because at open `bursts` is still empty and the honest answer to "what
+   * happened" is not yet known — briefing on that would flash an empty sheet
+   * and then fill in behind it.
+   */
+  const briefedFor = useRef(0);
+  useEffect(() => {
+    if (!project || lastSeenAt === 0 || briefedFor.current === lastSeenAt) return;
+    if (!shouldBrief({ since: lastSeenAt, now: Date.now(), bursts })) return;
+    briefedFor.current = lastSeenAt;
+    setBriefingOpen(true);
+  }, [project, lastSeenAt, bursts]);
+
+  /** Everything an agent touched while you were away — what the briefing hands on. */
+  const nightPaths = useMemo(() => {
+    const paths = new Set<string>();
+    for (const b of bursts) {
+      if (b.endedAt <= lastSeenAt || b.agent === 'you') continue;
+      for (const p of b.changed) paths.add(p);
+    }
+    return paths;
+  }, [bursts, lastSeenAt]);
+
+  /** The burst the time machine is parked on — the newest while pinned to live. */
+  const currentBurst = useMemo(
+    () => (selectedBurstId ? (bursts.find((b) => b.id === selectedBurstId) ?? null) : (bursts[bursts.length - 1] ?? null)),
+    [bursts, selectedBurstId],
+  );
+
+  /** The files the selected change touched — lit on the map, dimmed elsewhere. */
+  const burstPaths = useMemo(() => new Set(currentBurst ? currentBurst.changed : []), [currentBurst]);
+
+  /**
+   * The map beside the review list: the graph, filtered to this session.
+   *
+   * The node set is every file the *session* touched, not just the selected
+   * change, with the selected change lit and the rest dimmed. Filtering down
+   * to one burst's files would relayout the graph on every step, and a picture
+   * that rearranges itself each time you press ▶ cannot be read as motion
+   * through time — it reads as four unrelated diagrams. Holding the set still
+   * makes stepping a spotlight moving over a fixed map, which is the whole
+   * point of a time machine.
+   */
+  const burstGraph = useMemo(() => {
+    const upto = selectedBurstId ? bursts.findIndex((b) => b.id === selectedBurstId) : bursts.length - 1;
+    let scope = burstCumulative ? bursts.slice(0, upto + 1) : bursts;
+    if (burstRange) {
+      // an explicit span beats both — you asked for exactly these changes
+      const a = bursts.findIndex((b) => b.id === burstRange.from);
+      const b = bursts.findIndex((b2) => b2.id === burstRange.to);
+      if (a !== -1 && b !== -1) scope = bursts.slice(Math.min(a, b), Math.max(a, b) + 1);
+    }
+    const paths = new Set<string>();
+    for (const b of scope) for (const p of b.changed) paths.add(p);
+
+    const nodes = new Map<string, GraphNode>();
+    for (const p of paths) {
+      const node = fullNodesRef.current.get(p);
+      if (node) nodes.set(p, node);
+    }
+    const edges = new Map<string, GraphEdge>();
+    for (const [key, edge] of fullEdgesRef.current) {
+      if (nodes.has(edge.source) && nodes.has(edge.target)) edges.set(key, edge);
+    }
+    return { nodes, edges };
+  }, [bursts, selectedBurstId, burstCumulative, burstRange, graphVersion]);
+
+
   const dismissAlert = useCallback((alert: RiskAlert) => {
     setDismissedAlerts((prev) => new Set([...prev, alert.id]));
   }, []);
@@ -515,6 +736,72 @@ export function App() {
     setSelected(id);
     setSelectedPaths(id ? new Set([id]) : new Set());
   }, []);
+
+  /**
+   * A crossing on the strip takes you to the file it is about.
+   *
+   * The conflict names two agents and a file; the answer is always in the
+   * file, so that is where it goes rather than opening a card that explains
+   * itself and then asks you to go looking.
+   */
+  const openConflict = useCallback(
+    (conflict: Conflict) => {
+      const burstId = conflict.burstIds[0];
+      if (burstId) setSelectedBurstId(burstId);
+      if (conflict.paths[0]) {
+        selectSingle(conflict.paths[0]);
+        setReviewFocus(conflict.paths[0]);
+      }
+    },
+    [selectSingle],
+  );
+
+  /*
+   * Leaving the briefing.
+   *
+   * It dissolves into the graph rather than closing: the Activity lens comes
+   * on and the night's files are selected, so what you are left looking at is
+   * the same set the sheet was describing. Closing to an unchanged graph would
+   * make it a thing that happened *to* you rather than a caption on the map.
+   */
+  const dismissBriefing = useCallback(() => {
+    setBriefingOpen(false);
+    setLens('activity');
+    setSelectedPaths(new Set(nightPaths));
+    setActiveTab('graph');
+  }, [nightPaths]);
+
+  /**
+   * "Walk me through it": the review cockpit, with exactly the night on the map.
+   *
+   * This is the whole reason the strip takes a range — the briefing and the
+   * strip are the same control at two zoom levels, so the sheet hands its span
+   * straight over rather than approximating it with "everything up to now",
+   * which would drag in whatever you had already read before you left.
+   */
+  const briefingWalkthrough = useCallback(() => {
+    setBriefingOpen(false);
+    setLens('activity');
+    const first = bursts.find((b) => b.endedAt > lastSeenAt && b.agent !== 'you');
+    const last = bursts[bursts.length - 1];
+    if (first && last) setBurstRange({ from: first.id, to: last.id });
+    setSelectedBurstId(null);
+    setActiveTab('review');
+  }, [bursts, lastSeenAt]);
+
+  const openBriefingRow = useCallback(
+    (row: BriefingRow) => {
+      setBriefingOpen(false);
+      if (row.conflict) {
+        openConflict(row.conflict);
+        setActiveTab('review');
+        return;
+      }
+      // a question is answered in the control panel, not on the map
+      setActiveTab('board');
+    },
+    [openConflict],
+  );
 
   const toggleSelect = useCallback((id: string) => {
     // pure updater — safe under React's update replay/interleaving
@@ -712,7 +999,7 @@ export function App() {
           toast(
             drilled > 0
               ? `Unfolded ${dir}/ into ${drilled} sub-folders — click one to go deeper`
-              : `Unfolded ${dir}/ — fold it again from the Folders row below the toolbar`,
+              : `Unfolded ${dir}/ — fold it again from the Folders bar on the left`,
             'info',
           );
         }
@@ -1615,6 +1902,20 @@ export function App() {
   }, []);
 
   // what is currently selected (file, dir meta-node, or symbol)?
+  /*
+   * The details panel, dismissed without losing your place.
+   *
+   * It is derived from the selection, so the only way to close it used to be
+   * to deselect — which also drops the highlight on the graph and is a
+   * different intention from "I have read this". Any *new* selection reopens
+   * it, because picking a node is how you ask for its details in the first
+   * place.
+   */
+  const [detailsClosed, setDetailsClosed] = useState(false);
+  useEffect(() => {
+    setDetailsClosed(false);
+  }, [selected]);
+
   const selection = useMemo(() => {
     if (!selected) return null;
     if (selected.startsWith('@dir:')) {
@@ -1648,7 +1949,16 @@ export function App() {
   }
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      /*
+       * The terminal's height, published so the corner alerts can sit above it.
+       * They are pinned to the bottom-right and were floating over the terminal
+       * — covering the output of the very agent whose changes they are warning
+       * about, which is the one thing you would be watching when they appear.
+       */
+      style={{ '--terminal-h': `${terminalHeight}px` } as React.CSSProperties}
+    >
       <div className="topbar" style={RESERVE_TRAFFIC_LIGHTS ? { paddingLeft: 76 } : undefined}>
         <span className="brand"><FlareMark size={15} />Flare</span>
         <MenuBar menus={appMenus} />
@@ -1986,6 +2296,7 @@ export function App() {
                     symbolGraphs={symbolGraphs}
                     recentChanges={recentChanges}
                     selectedPaths={selectedPaths}
+                    conflicts={crossings}
                     onSelect={selectSingle}
                     onToggleSelect={toggleSelect}
                     onBoxSelect={boxSelect}
@@ -2097,18 +2408,12 @@ export function App() {
                       >
                         ↻ Re-layout
                       </button>
-                      <button
-                        className="lens-btn"
-                        title={
-                          allCollapsed
-                            ? 'Unfold every directory so each file gets its own node.'
-                            : 'Fold every directory into a single node — the fastest way out of a hairball.'
-                        }
-                        onClick={() => updateCollapsed(allCollapsed ? new Set() : new Set(allClusters))}
-                        data-testid="collapse-toggle-all"
-                      >
-                        {allCollapsed ? '▢ Unfold all' : '▣ Fold all'}
-                      </button>
+                      {/*
+                        Fold-all lived here too, doing exactly what Fold all /
+                        Unfold all in the folders bar does. Two controls for one
+                        action in two places is how they end up disagreeing
+                        about their own label; folding belongs with the folders.
+                      */}
                     </div>
                     {/* Zoom, fit, centre and the shortcut list live on the
                         canvas now, in CanvasTools — see the note there. */}
@@ -2201,6 +2506,8 @@ export function App() {
                     }}
                     onOpenFile={openFile}
                     onModal={setModal}
+                    openRoutine={routineNonce}
+                    mcpUrl={mcpInfo.port ? mcpUrl(mcpInfo.port, mcpInfo.slug) : null}
                   />
                 )}
                 {activeTab === 'review' && (
@@ -2220,6 +2527,53 @@ export function App() {
                     onBackToGreen={backToGreen}
                     focusPath={reviewFocus}
                     onFocusHandled={() => setReviewFocus(null)}
+                    conflicts={crossings}
+                    decisions={board.decisions}
+                    questions={board.questions}
+                    selectedBurstId={selectedBurstId}
+                    range={burstRange}
+                    onRange={setBurstRange}
+                    cumulative={burstCumulative}
+                    writing={Object.values(agentStatus).some(Boolean)}
+                    onSelectBurst={setSelectedBurstId}
+                    onToggleCumulative={() => setBurstCumulative((v) => !v)}
+                    onOpenConflict={openConflict}
+                    subgraph={
+                      burstGraph.nodes.size > 0 ? (
+                        <CanvasView
+                          theme={theme}
+                          graphVersion={graphVersion}
+                          fullNodes={burstGraph.nodes}
+                          fullEdges={burstGraph.edges}
+                          projectRoot={project.root}
+                          gitStatus={gitStatus}
+                          changedAt={changedAt}
+                          changedBy={changedBy}
+                          churn={churn}
+                          coverage={coverage}
+                          reuse={reuseByPath}
+                          selectMode={false}
+                          reviewInfo={reviewInfo}
+                          selected={selected}
+                          searchQuery=""
+                          focusId={null}
+                          lens="activity"
+                          collapsedDirs={EMPTY_SET}
+                          expandedFiles={EMPTY_SET}
+                          symbolGraphs={EMPTY_SYMBOLS}
+                          recentChanges={recentChanges}
+                          selectedPaths={burstPaths}
+                          conflicts={crossings}
+                          onSelect={selectSingle}
+                          onToggleSelect={toggleSelect}
+                          onBoxSelect={boxSelect}
+                          onNodeContextMenu={openContextMenu}
+                          onOpenFile={openFile}
+                          onToggleDir={toggleDir}
+                          onStats={noopStats}
+                        />
+                      ) : undefined
+                    }
                   />
                 )}
                 {activeTab === 'insights' && (
@@ -2264,13 +2618,31 @@ export function App() {
               </div>
             </div>
 
-            {selection && (
+            {selection && !detailsClosed && (
               <>
                 <Splitter
                   direction="horizontal"
                   onDrag={(x) => setDetailsWidth(Math.max(220, Math.min(560, window.innerWidth - x)))}
                 />
                 <div className="details-panel" style={{ width: detailsWidth }}>
+                  {/*
+                    A way out that is not "go and click the empty canvas".
+                    The panel opens by selecting something, and until now that
+                    was also the only way to close it — so dismissing it meant
+                    giving up your selection, which is a different intention
+                    entirely. Pinned rather than in the flow so it works for a
+                    file and a directory without either of them growing a
+                    header of its own.
+                  */}
+                  <button
+                    className="details-close"
+                    title="Close this panel — the node stays selected"
+                    aria-label="Close details"
+                    onClick={() => setDetailsClosed(true)}
+                    data-testid="details-close"
+                  >
+                    ✕
+                  </button>
                   {selection.type === 'file' && (
                     <DetailsPanel
                       nodeId={selection.path}
@@ -2373,7 +2745,7 @@ export function App() {
 
           <Splitter
             direction="vertical"
-            onDrag={(y) => setTerminalHeight(Math.max(80, Math.min(window.innerHeight - 200, window.innerHeight - y - 22)))}
+            onDrag={(y) => setTerminalHeight(clampTerminal(window.innerHeight - y - 22, window.innerHeight))}
           />
           <TerminalPanel
             projectRoot={project.root}
@@ -2382,6 +2754,11 @@ export function App() {
             commands={commands}
             openAt={openTerminalAt}
             mcp={mcpInfo}
+            heartbeat={board.routine}
+            onOpenRoutine={() => {
+              setActiveTab('board');
+              setRoutineNonce((n) => n + 1);
+            }}
           />
         </div>
       </div>
@@ -2450,6 +2827,20 @@ export function App() {
         different depending on what was selected — a notification that moves
         around is one you have to look for. It floats over the panel instead.
       */}
+      {/*
+        Last, and over everything: it is the state the app is in on arrival,
+        not a layer inside the workspace. Alerts and toasts underneath it are
+        about a session you have not started reading yet.
+      */}
+      {briefingOpen && nightBriefing && (
+        <Briefing
+          data={nightBriefing}
+          sinceLabel={when(nightBriefing.since)}
+          onWalkthrough={briefingWalkthrough}
+          onOpenRow={openBriefingRow}
+          onDismiss={dismissBriefing}
+        />
+      )}
       <div className="corner-stack">
         <Toasts />
         <RiskAlerts

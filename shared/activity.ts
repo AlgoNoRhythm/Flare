@@ -47,7 +47,17 @@ export interface ChangeBurst {
   startedAt: number;
   /** time of the last file write in this burst */
   endedAt: number;
+  /** the *tool* that made it: 'claude', 'you', or 'mixed' when we could not tell */
   agent: string;
+  /**
+   * Terminal-scoped identity, when the session could pin one down — two
+   * `claude` sessions are two agents, and `agent` alone cannot say that.
+   * Absent on bursts from before the terminal was known, so readers that care
+   * about *who* should go through `agentIdOf` in shared/conflicts.ts.
+   */
+  agentId?: string;
+  /** What to call that agent: the board task it claimed, else the tool name. */
+  agentLabel?: string;
   changed: string[];
   removed: string[];
   smells: Smell[];
@@ -67,6 +77,22 @@ export const VERIFICATION_LABEL: Record<VerificationState, string> = {
   running: 'checking…',
   stale: 'checked, then edited again',
   'not-run': 'never checked',
+};
+
+/**
+ * How a verification state reads as colour.
+ *
+ * Here rather than in the review panel because the time machine paints the
+ * same verdict on the same change — a tick that says "green" over a burst the
+ * list below calls "never checked" is worse than no colour at all.
+ */
+export const VERIFY_TONE: Record<VerificationState, 'good' | 'warn' | 'crit' | 'muted'> = {
+  passed: 'good',
+  failed: 'crit',
+  'not-run': 'crit',
+  stale: 'warn',
+  unknown: 'warn',
+  running: 'muted',
 };
 
 export const VERIFICATION_HINT: Record<VerificationState, string> = {
