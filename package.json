@@ -21,7 +21,8 @@
     "verify": "npm run build && npm run test && npm run e2e",
     "dist": "npm run build && electron-builder --publish never",
     "dist:dir": "npm run build && electron-builder --dir --publish never",
-    "icon": "node scripts/make-icon.mjs"
+    "icon": "node scripts/make-icon.mjs",
+    "shots": "node scripts/shot-readme.mjs"
   },
   "build": {
     "appId": "dev.flare.app",
