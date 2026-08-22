@@ -2075,8 +2075,19 @@ export function App() {
        * They are pinned to the bottom-right and were floating over the terminal
        * — covering the output of the very agent whose changes they are warning
        * about, which is the one thing you would be watching when they appear.
+       *
+       * The details panel's width goes out for the same reason, one axis over:
+       * the alerts are pinned to the right edge of the *window*, so an open
+       * panel sits underneath them and its lower controls — the timeline's
+       * "revert to this" among them — stop taking clicks. Zero when the panel
+       * is closed, so the alerts keep the corner to themselves.
        */
-      style={{ '--terminal-h': `${terminalHeight}px` } as React.CSSProperties}
+      style={
+        {
+          '--terminal-h': `${terminalHeight}px`,
+          '--details-w': selection && !detailsClosed ? `${detailsWidth}px` : '0px',
+        } as React.CSSProperties
+      }
     >
       <div className="topbar" style={RESERVE_TRAFFIC_LIGHTS ? { paddingLeft: 76 } : undefined}>
         <span className="brand"><FlareMark size={15} />Flare</span>

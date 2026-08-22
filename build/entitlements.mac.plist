@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What the hardened runtime has to be told to allow.
+
+  The release is ad-hoc signed (`mac.identity: "-"`), because shipping a
+  Developer ID build needs a paid Apple account. Ad-hoc plus the hardened
+  runtime is the combination macOS is strictest about, and electron-builder
+  warns about it by name: without `disable-library-validation` the loader
+  refuses any library whose signature does not share the app's Team ID, and an
+  ad-hoc signature has no Team ID at all — so the unpacked `pty.node` is
+  exactly the kind of thing that gets rejected, and the terminal comes up dead
+  in a build that otherwise looks fine.
+
+  The two memory entitlements are V8's: it compiles JavaScript at runtime, which
+  the hardened runtime treats as writing executable memory unless told
+  otherwise.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

@@ -220,7 +220,7 @@ test('the terminal runs a real shell on the server', async ({ page }) => {
   await expect(panel.locator('.xterm')).toBeVisible();
   // wait for the shell to print a prompt, and for xterm to be ready to take
   // input — a fixed pause is not enough on a loaded machine
-  await expect(panel.locator('.xterm-rows')).toContainText(/[$>#]/, { timeout: 30_000 });
+  await expect(panel.locator('.xterm-rows')).toContainText(/[$>#%]/, { timeout: 30_000 });
   await panel.locator('.terminal-body').click();
   await expect(panel.locator('.xterm-helper-textarea')).toBeFocused();
   await page.keyboard.type('echo flare_over_the_wire');
@@ -239,7 +239,7 @@ test('two tabs on one project keep their own terminals', async ({ browser }) => 
   try {
     await open(first, slugA);
     const firstTerm = first.getByTestId('terminal-panel');
-    await expect(firstTerm.locator('.xterm-rows')).toContainText(/[$>#]/, { timeout: 30_000 });
+    await expect(firstTerm.locator('.xterm-rows')).toContainText(/[$>#%]/, { timeout: 30_000 });
     await firstTerm.locator('.terminal-body').click();
     await first.keyboard.type('echo first_tab_marker');
     await first.keyboard.press('Enter');
@@ -250,7 +250,7 @@ test('two tabs on one project keep their own terminals', async ({ browser }) => 
     // the second tab opens its own terminal
     await open(second, slugA);
     await expect(second.getByTestId('terminal-panel').locator('.xterm-rows')).toContainText(
-      /[$>#]/,
+      /[$>#%]/,
       { timeout: 30_000 },
     );
 
@@ -519,7 +519,7 @@ test('the terminal pastes in a browser tab too, using the viewer clipboard', asy
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await open(page, slugA);
   const panel = page.getByTestId('terminal-panel');
-  await expect(panel.locator('.xterm-rows')).toContainText(/[$>#]/, { timeout: 30_000 });
+  await expect(panel.locator('.xterm-rows')).toContainText(/[$>#%]/, { timeout: 30_000 });
 
   await page.evaluate(() => navigator.clipboard.writeText('echo pasted_in_browser'));
   await panel.locator('.terminal-body').click();

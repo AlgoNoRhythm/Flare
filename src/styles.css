@@ -492,7 +492,13 @@ body,
  */
 .corner-stack {
   position: fixed;
-  right: 16px;
+  /*
+   * Clear of the details panel, for the same reason they clear the terminal.
+   * Pinned to the window's right edge, they land on top of an open panel and
+   * swallow the clicks on whatever it has near the bottom. `--details-w` is
+   * the panel's width, or 0 when it is closed.
+   */
+  right: calc(var(--details-w, 0px) + 16px);
   /*
    * Above the terminal, not over it.
    *
@@ -5891,11 +5897,18 @@ button.btn:disabled {
  *
  * Bottom rather than following the cursor: an action bar that moves is one you
  * have to chase, and the toolbar at the top is already full.
+ *
+ * Above the tool row, not level with it. This bar is centred and as wide as
+ * its buttons, while `.canvas-tools` sit in the two bottom corners — so on a
+ * narrow canvas (a 1440-wide screen with the details panel open is enough)
+ * the bar reaches both corners and, being the higher z-index, swallows the
+ * clicks on zoom, fit and centre. Clearing the row vertically fixes that at
+ * every width instead of only the wide ones.
  */
 .bulk-bar {
   position: absolute;
   left: 50%;
-  bottom: 18px;
+  bottom: 64px;
   transform: translateX(-50%);
   z-index: 6;
   display: flex;

@@ -74,8 +74,10 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.png",
       "darkModeSupport": true,
-      "identity": null,
+      "identity": "-",
       "notarize": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "artifactName": "${productName}-${version}-macOS-${arch}-beta.${ext}"
     },
     "linux": {

@@ -337,12 +337,20 @@ Built releases are on the [releases page](https://github.com/AlgoNoRhythm/Flare/
 | macOS, Intel | `Flare-<version>-macOS-x64-beta.dmg` | **Beta** — see below. |
 | Linux | `Flare-<version>-Linux-x86_64.AppImage` | `chmod +x` and run. A `.deb` and a `.tar.gz` are published too. |
 
-The macOS packages say **beta** in their filename for two reasons, and both
-are worth knowing before you download one. They have never run on a Mac —
-there is no Apple hardware behind this project, so CI builds them and nobody
-has opened one; Windows and Linux are both built *and* exercised, suite and
-packaged app, before a release goes out. And they are unsigned and
-un-notarised, so Gatekeeper will refuse the first launch. Open it once with
+The macOS packages still say **beta** in their filename, but for a narrower
+reason than they used to.
+
+They have now run on a Mac. The full suite — 544 unit tests and 78 end-to-end
+tests, Electron and browser — passes on macOS 14, and the packaged `.app` is
+booted out of its own DMG and checked for a working terminal before a release
+goes out, the same bar Windows and Linux are held to. What is *not* covered is
+Apple silicon specifically: the hardware behind this project is Intel, so the
+`arm64` package is built and signed but has never been launched. That is what
+the beta label is now for.
+
+They are also **ad-hoc signed and un-notarised**. Notarising needs a paid Apple
+Developer account, so Gatekeeper will still refuse the first launch — the
+signature is there to satisfy the loader, not Gatekeeper. Open it once with
 right-click → Open, or clear the quarantine flag:
 
 ```sh

@@ -658,11 +658,16 @@ test('command palette jumps to a file', async () => {
 });
 
 test('multi-select with structured copy-paths, create and delete via context menu', async () => {
-  // plain-click selects the first file; ctrl+click extends the selection
+  // plain-click selects the first file; the extend-selection modifier adds to it
   // (wrapped in toPass — modifier clicks can be racy right after heavy churn)
+  //
+  // `ControlOrMeta`, not `Control`: the app takes either (`e.ctrlKey ||
+  // e.metaKey`), but macOS turns a literal ctrl+click into a *secondary*
+  // click, so the row would open its context menu instead of joining the
+  // selection and the chip would never say "2 selected".
   await expect(async () => {
     await page.getByTestId('tree-file-src/app.ts').click();
-    await page.getByTestId('tree-file-src/util.ts').click({ modifiers: ['Control'] });
+    await page.getByTestId('tree-file-src/util.ts').click({ modifiers: ['ControlOrMeta'] });
     await expect(page.getByTestId('selection-chip')).toContainText('2 selected', { timeout: 2500 });
   }).toPass({ timeout: 25_000 });
   await page.getByTestId('tab-graph').click();
@@ -2013,7 +2018,22 @@ test('the source and the rendered document stay on the same part of the file', a
   await page.mouse.move(renderBox!.x + renderBox!.width / 2, renderBox!.y + renderBox!.height / 2);
   for (let i = 0; i < 4; i++) await page.mouse.wheel(0, 400);
   await expect.poll(editorTopLine, { timeout: 10_000 }).toBeGreaterThan(sourceLine);
-  expect(Math.abs((await editorTopLine()) - 1 - (await renderTopLine()))).toBeLessThanOrEqual(6);
+  /*
+   * Polled, not read once.
+   *
+   * The preview scrolls natively and lands immediately; the editor is *sent*
+   * there and Monaco smooth-scrolls the rest of the way. The poll above is
+   * satisfied by the first frame of that animation, so reading both panes
+   * straight after it compares an editor still in flight against a preview
+   * that already arrived — off by the whole gesture (~60 lines) on a machine
+   * slow enough to still be animating. What this test is about is where they
+   * come to rest.
+   */
+  await expect
+    .poll(async () => Math.abs((await editorTopLine()) - 1 - (await renderTopLine())), {
+      timeout: 10_000,
+    })
+    .toBeLessThanOrEqual(6);
 
   /*
    * And back to the very top, in one burst with no pauses.
