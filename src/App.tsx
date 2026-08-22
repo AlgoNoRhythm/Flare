@@ -70,6 +70,7 @@ import { Briefing } from './components/Briefing';
 import { baseSnapshotFor } from '../shared/review';
 import { LENSES, riskScore, type Lens } from './graph/lenses';
 import { THEMES, applyTheme, currentTheme, onThemeChange, storedChoice, type ThemeChoice, type ThemeName } from './theme';
+import { briefingEnabled, setBriefingEnabled } from './prefs';
 import { buildLensContext, lensSignal } from './graph/lensColor';
 import {
   DRILL_ABOVE,
@@ -79,6 +80,7 @@ import {
   unfoldDir,
 } from './graph/renderModel';
 import { formatPathsFlat, formatPathsTree } from '../shared/pathFormat';
+import { withBlastRadius } from '../shared/graph';
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
 
@@ -148,6 +150,8 @@ type GraphViewKind = 'canvas' | 'wheel' | 'districts';
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const EMPTY_SYMBOLS: ReadonlyMap<string, SymbolGraph> = new Map();
 const noopStats = (): void => {};
+/** the map on the briefing is read-only: it has no toolbar to drive the rest */
+const noop = (): void => {};
 
 function edgeMapKey(e: GraphEdge): string {
   return `${e.source}\n${e.target}`;
@@ -223,6 +227,15 @@ export function App() {
    */
   const [lastSeenAt, setLastSeenAt] = useState(0);
   const [briefingOpen, setBriefingOpen] = useState(false);
+  /**
+   * Whether arriving is allowed to raise it at all.
+   *
+   * Separate from `briefingOpen` and read from the person's settings rather
+   * than the project's: turning it off is a standing answer, and turning it
+   * off *while it is open* must not yank the sheet out from under someone
+   * mid-sentence — so the mute closes it explicitly instead of gating it.
+   */
+  const [briefingOn, setBriefingOn] = useState(briefingEnabled);
   /** bumped while the window has focus, so the presence mark stays current */
   const [presenceTick, setPresenceTick] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -356,9 +369,21 @@ export function App() {
       if (ui.lens) setLens(ui.lens as Lens);
       if (typeof ui.selectMode === 'boolean') setSelectMode(ui.selectMode);
       if (typeof ui.legendCollapsed === 'boolean') setLegendCollapsed(ui.legendCollapsed);
-      if (ui.graphView === 'canvas' || ui.graphView === 'wheel' || ui.graphView === 'districts') {
-        setGraphView(ui.graphView);
-      }
+      /*
+       * `ui.graphView` is deliberately *not* restored: a project always opens
+       * on the canvas.
+       *
+       * The map is the home surface of a graph-first IDE, and the canvas is
+       * the map. The wheel answers a narrower question — what talks to what
+       * across the whole repo — and districts a different one again, so
+       * landing in either means arriving somewhere that assumes you already
+       * know what you came to look at. They are views you switch *to*, one
+       * click away on the toolbar, and any view added later inherits this
+       * rather than becoming an exception.
+       *
+       * Same rule the active tab follows a few lines down, for the same
+       * reason. The value is still written on save; nothing reads it back.
+       */
       if (ui.sidebarWidth) setSidebarWidth(ui.sidebarWidth);
       /*
        * A restored height is a number from another window.
@@ -639,9 +664,17 @@ export function App() {
   useEffect(() => {
     if (!project || lastSeenAt === 0 || briefedFor.current === lastSeenAt) return;
     if (!shouldBrief({ since: lastSeenAt, now: Date.now(), bursts })) return;
+    /*
+     * The absence is spent either way.
+     *
+     * Marking it before the mute check is what makes turning the setting back
+     * on apply to the *next* absence rather than firing the sheet at someone
+     * the instant they tick the menu item for a night they already skipped.
+     */
     briefedFor.current = lastSeenAt;
+    if (!briefingOn) return;
     setBriefingOpen(true);
-  }, [project, lastSeenAt, bursts]);
+  }, [briefingOn, project, lastSeenAt, bursts]);
 
   /** Everything an agent touched while you were away — what the briefing hands on. */
   const nightPaths = useMemo(() => {
@@ -652,6 +685,28 @@ export function App() {
     }
     return paths;
   }, [bursts, lastSeenAt]);
+
+  /**
+   * The night as a subgraph: exactly the files the agents touched, and the
+   * imports between them.
+   *
+   * Built the same way as the review panel's map and deliberately no wider —
+   * pulling in neighbours would answer "what might be affected", which is the
+   * review panel's job and needs the room to do it. Here the question is only
+   * "where did the night land", so the node set is the night and nothing else.
+   */
+  const nightGraph = useMemo(() => {
+    const nodes = new Map<string, GraphNode>();
+    for (const p of nightPaths) {
+      const node = fullNodesRef.current.get(p);
+      if (node) nodes.set(p, node);
+    }
+    const edges = new Map<string, GraphEdge>();
+    for (const [key, edge] of fullEdgesRef.current) {
+      if (nodes.has(edge.source) && nodes.has(edge.target)) edges.set(key, edge);
+    }
+    return { nodes, edges };
+  }, [nightPaths, graphVersion]);
 
   /** The burst the time machine is parked on — the newest while pinned to live. */
   const currentBurst = useMemo(
@@ -788,6 +843,20 @@ export function App() {
     setSelectedBurstId(null);
     setActiveTab('review');
   }, [bursts, lastSeenAt]);
+
+  /**
+   * "Don't show this again", from the sheet itself.
+   *
+   * Turning it off is not the same act as skipping it, so this still leaves
+   * you where dismissing does — on the map, Activity lens on, the night
+   * selected. What changes is only whether tomorrow's arrival raises it.
+   */
+  const muteBriefing = useCallback(() => {
+    setBriefingEnabled(false);
+    setBriefingOn(false);
+    dismissBriefing();
+    toast('Briefings off — View ▸ While You Were Away turns them back on', 'info');
+  }, [dismissBriefing]);
 
   const openBriefingRow = useCallback(
     (row: BriefingRow) => {
@@ -1367,6 +1436,22 @@ export function App() {
   }, [closeTab]);
 
   // ---------- application menu ----------
+  /**
+   * The selection, widened to everything that imports it.
+   *
+   * Computed once here rather than at each click, because the *count* is the
+   * point: "Copy connected" with no number beside it is a button you press to
+   * find out how much you just took, and the answer can be forty files. The
+   * graph is a ref, so `graphVersion` is what says it moved.
+   */
+  const connectedSelection = useMemo(
+    () => withBlastRadius(selectedPaths, fullEdgesRef.current.values()),
+    [selectedPaths, graphVersion],
+  );
+
+  /** How many files the blast radius adds on top of what is selected. */
+  const connectedExtra = connectedSelection.length - selectedPaths.size;
+
   const appMenus = useMemo<MenuDef[]>(() => {
     const viewEntry = (id: GraphViewKind, label: string) => ({
       id: `view-${id}`,
@@ -1455,6 +1540,17 @@ export function App() {
             label: 'Local History',
             checked: showTimeline,
             run: () => setShowTimeline((v) => !v),
+          },
+          {
+            id: 'briefing',
+            label: 'While You Were Away',
+            hint: briefingOn ? undefined : 'off',
+            checked: briefingOn,
+            run: () => {
+              const next = !briefingOn;
+              setBriefingEnabled(next);
+              setBriefingOn(next);
+            },
           },
           { id: 'sep2', separator: true },
           { id: 'zoom-in', label: 'Zoom In', hint: 'Ctrl +', run: () => graphRef.current?.zoom(1) },
@@ -1588,6 +1684,7 @@ export function App() {
     activeTab,
     sidebarVisible,
     showTimeline,
+    briefingOn,
     lens,
     coverage,
     allCollapsed,
@@ -1660,12 +1757,34 @@ export function App() {
           : 'New task with this file',
       run: () => taskFromSelection(allPaths),
     });
+    /*
+     * The blast-radius versions, next to the ones they widen, and only when
+     * they would widen anything — an entry that promises "and everything that
+     * imports it" and then files the same three files teaches you to distrust
+     * the label.
+     */
+    const ctxConnected = withBlastRadius(allPaths, fullEdgesRef.current.values());
+    const ctxExtra = ctxConnected.length - allPaths.length;
+    if (ctxExtra > 0) {
+      items.push({
+        id: 'new-task-connected',
+        label: `New task on connected (${ctxConnected.length} files, +${ctxExtra})`,
+        run: () => taskFromSelection(ctxConnected),
+      });
+    }
     items.push({ id: 'sep-task', label: '', separator: true });
     items.push({
       id: 'copy-paths',
       label: allPaths.length > 1 ? `Copy ${allPaths.length} paths (structured)` : 'Copy path',
       run: () => copyPaths(allPaths, false),
     });
+    if (ctxExtra > 0) {
+      items.push({
+        id: 'copy-connected',
+        label: `Copy connected (${ctxConnected.length} paths, +${ctxExtra})`,
+        run: () => copyPaths(ctxConnected, false),
+      });
+    }
     if (allPaths.length > 1) {
       items.push({
         id: 'copy-paths-flat',
@@ -2257,7 +2376,12 @@ export function App() {
                 </div>
               </div>
               <div className="tab-body">
-                <div style={{ position: 'absolute', inset: 0, display: activeTab === 'graph' ? 'block' : 'none' }}>
+                {/* named so the chrome inside it can step aside for the wheel's
+                    index rail, which claims the same left edge */}
+                <div
+                  className="graph-pane"
+                  style={{ position: 'absolute', inset: 0, display: activeTab === 'graph' ? 'block' : 'none' }}
+                >
                   {viewReady && (
                     <CanvasTools
                       selectMode={selectMode}
@@ -2446,6 +2570,32 @@ export function App() {
                       >
                         Copy for agent
                       </button>
+                      {/*
+                        The same two actions over the blast radius.
+
+                        Paired with their plain counterparts rather than hidden
+                        behind a modifier, because which one you want is a
+                        decision about the change — "rename this helper" needs
+                        everything that calls it, "fix this typo" does not —
+                        and a modifier key is a decision you cannot see. The
+                        count carries the warning: pressing a button that
+                        quietly grew a 3-file selection to 40 is how you paste
+                        the repo into an agent by accident.
+                      */}
+                      <button
+                        className="btn"
+                        disabled={connectedExtra === 0}
+                        title={
+                          connectedExtra === 0
+                            ? 'Nothing imports these files — connected would copy the same set'
+                            : `Copy these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them, directly or through something else`
+                        }
+                        onClick={() => copyPaths(connectedSelection, false)}
+                        data-testid="bulk-copy-connected"
+                      >
+                        Copy connected
+                        {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
+                      </button>
                       <button
                         className="btn"
                         title="File these as one task on the board, with the same context attached"
@@ -2453,6 +2603,20 @@ export function App() {
                         data-testid="bulk-task"
                       >
                         New task
+                      </button>
+                      <button
+                        className="btn"
+                        disabled={connectedExtra === 0}
+                        title={
+                          connectedExtra === 0
+                            ? 'Nothing imports these files — the task would carry the same set'
+                            : `File a task covering these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them`
+                        }
+                        onClick={() => taskFromSelection(connectedSelection)}
+                        data-testid="bulk-task-connected"
+                      >
+                        New task on connected
+                        {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
                       </button>
                       {[...selectedPaths].some((p) => unreviewed.includes(p)) && (
                         <button
@@ -2836,8 +3000,58 @@ export function App() {
         <Briefing
           data={nightBriefing}
           sinceLabel={when(nightBriefing.since)}
+          subgraph={
+            nightGraph.nodes.size > 0 ? (
+              <CanvasView
+                theme={theme}
+                graphVersion={graphVersion}
+                fullNodes={nightGraph.nodes}
+                fullEdges={nightGraph.edges}
+                projectRoot={project?.root ?? ''}
+                gitStatus={gitStatus}
+                changedAt={changedAt}
+                changedBy={changedBy}
+                churn={churn}
+                coverage={coverage}
+                reuse={reuseByPath}
+                selectMode={false}
+                reviewInfo={reviewInfo}
+                selected={null}
+                searchQuery=""
+                focusId={null}
+                lens="activity"
+                collapsedDirs={EMPTY_SET}
+                expandedFiles={EMPTY_SET}
+                symbolGraphs={EMPTY_SYMBOLS}
+                recentChanges={recentChanges}
+                selectedPaths={nightPaths}
+                conflicts={crossings}
+                /*
+                 * Clicking a file here is the same gesture as clicking a row:
+                 * it is an answer to "start me there". So it leaves the sheet
+                 * the way dismissing does and lands on that file, rather than
+                 * selecting something underneath a modal nobody can see past.
+                 */
+                onSelect={(id) => {
+                  if (!id) return;
+                  dismissBriefing();
+                  selectSingle(id);
+                }}
+                onToggleSelect={noop}
+                onBoxSelect={noop}
+                onNodeContextMenu={noop}
+                onOpenFile={(id) => {
+                  dismissBriefing();
+                  openFile(id);
+                }}
+                onToggleDir={noop}
+                onStats={noopStats}
+              />
+            ) : undefined
+          }
           onWalkthrough={briefingWalkthrough}
           onOpenRow={openBriefingRow}
+          onDisable={muteBriefing}
           onDismiss={dismissBriefing}
         />
       )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { Briefing as BriefingData, BriefingRow } from '../../shared/briefing';
 import { spanLabel } from '../../shared/briefing';
 import { plural } from '../format';
@@ -31,9 +31,20 @@ interface Props {
   data: BriefingData;
   /** rendered under the counts: the day and time you were last here */
   sinceLabel: string;
+  /**
+   * The night as a picture: the graph, filtered to what the agents touched.
+   *
+   * The same subgraph the review panel puts beside its list, and passed in the
+   * same way — the app owns the graph, so it renders it and this places it.
+   * It earns its space by answering the one question the rows cannot: whether
+   * the night landed in one corner of the repo or right across it.
+   */
+  subgraph?: ReactNode;
   onWalkthrough(): void;
   onOpenRow(row: BriefingRow): void;
   onDismiss(): void;
+  /** stop raising this on arrival, from now on and in every project */
+  onDisable(): void;
 }
 
 const ROW_MARK: Record<BriefingRow['kind'], string> = {
@@ -42,7 +53,7 @@ const ROW_MARK: Record<BriefingRow['kind'], string> = {
   clear: '✓',
 };
 
-export function Briefing({ data, sinceLabel, onWalkthrough, onOpenRow, onDismiss }: Props) {
+export function Briefing({ data, sinceLabel, subgraph, onWalkthrough, onOpenRow, onDismiss, onDisable }: Props) {
   const primaryRef = useRef<HTMLButtonElement | null>(null);
 
   /*
@@ -68,7 +79,7 @@ export function Briefing({ data, sinceLabel, onWalkthrough, onOpenRow, onDismiss
 
   return (
     <div className="briefing" data-testid="briefing" role="dialog" aria-modal="true" aria-label="While you were away">
-      <div className="briefing-sheet">
+      <div className={`briefing-sheet${subgraph ? ' with-map' : ''}`}>
         <div className="briefing-head">
           <h1 className="briefing-title">
             {data.agents === 1 ? 'An agent worked' : `${data.agents} agents worked`} for {spanLabel(data.workedMs)}.
@@ -89,6 +100,12 @@ export function Briefing({ data, sinceLabel, onWalkthrough, onOpenRow, onDismiss
             <> · nothing needs you</>
           )}
         </p>
+
+        {subgraph && (
+          <div className="briefing-map" data-testid="briefing-map">
+            {subgraph}
+          </div>
+        )}
 
         <div className="briefing-rows">
           {data.rows.map((row) => {
@@ -131,6 +148,22 @@ export function Briefing({ data, sinceLabel, onWalkthrough, onOpenRow, onDismiss
           </button>
           <button className="briefing-skip" data-testid="briefing-skip" onClick={onDismiss}>
             Skip →
+          </button>
+          {/*
+            The off switch, on the thing itself.
+            Far right and quiet, because it is the rarest of the three
+            answers — but it is here rather than only in the View menu, since
+            the moment someone decides they do not want this is the moment it
+            is covering their screen, not a moment they go looking through
+            menus for.
+          */}
+          <button
+            className="briefing-mute"
+            data-testid="briefing-mute"
+            title="Never raise this on arrival again. View ▸ While You Were Away turns it back on."
+            onClick={onDisable}
+          >
+            Don't show this again
           </button>
         </div>
       </div>

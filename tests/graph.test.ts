@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GraphBuilder, findCycles, isTestPath } from '../shared/graph';
+import { GraphBuilder, findCycles, isTestPath, withBlastRadius } from '../shared/graph';
 import { parseFile } from '../shared/parser';
 
 function p(path: string, content: string) {
@@ -225,5 +225,50 @@ describe('isTestPath', () => {
     expect(isTestPath('pkg/test_util.py')).toBe(true);
     expect(isTestPath('src/foo.ts')).toBe(false);
     expect(isTestPath('src/latest.ts')).toBe(false);
+  });
+});
+
+describe('withBlastRadius', () => {
+  // util <- helper <- app, and api imports util directly; leaf imports nothing
+  const edges = [
+    { source: 'src/helper.ts', target: 'src/util.ts', weight: 1 },
+    { source: 'src/app.ts', target: 'src/helper.ts', weight: 1 },
+    { source: 'src/api.ts', target: 'src/util.ts', weight: 1 },
+    { source: 'src/leaf.ts', target: 'src/api.ts', weight: 1 },
+  ];
+
+  it('walks importers to any depth, and keeps the seeds', () => {
+    expect(withBlastRadius(['src/util.ts'], edges)).toEqual([
+      'src/api.ts',
+      'src/app.ts',
+      'src/helper.ts',
+      'src/leaf.ts',
+      'src/util.ts',
+    ]);
+  });
+
+  it('does not walk downstream — what a file imports is not its blast radius', () => {
+    expect(withBlastRadius(['src/app.ts'], edges)).toEqual(['src/app.ts']);
+  });
+
+  it('unions the radii of several seeds without repeating a file', () => {
+    expect(withBlastRadius(['src/helper.ts', 'src/api.ts'], edges)).toEqual([
+      'src/api.ts',
+      'src/app.ts',
+      'src/helper.ts',
+      'src/leaf.ts',
+    ]);
+  });
+
+  it('terminates on a cycle instead of walking it forever', () => {
+    const cyclic = [
+      { source: 'a.ts', target: 'b.ts', weight: 1 },
+      { source: 'b.ts', target: 'a.ts', weight: 1 },
+    ];
+    expect(withBlastRadius(['a.ts'], cyclic)).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('passes through a path the graph has never heard of', () => {
+    expect(withBlastRadius(['docs/'], edges)).toEqual(['docs/']);
   });
 });

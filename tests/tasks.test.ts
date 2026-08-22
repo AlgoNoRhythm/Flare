@@ -44,16 +44,21 @@ describe('createTask', () => {
     expect(task.title).toBe('Untitled task');
     expect(task.paths).toEqual(['a.ts', 'b.ts']);
   });
+
+  it('puts the newest card at the top of its lane', () => {
+    const board = withTasks(['one', 'two', 'three']);
+    expect(tasksInLane(board, 'todo').map((t) => t.id)).toEqual(['three', 'two', 'one']);
+  });
 });
 
 describe('moving tasks', () => {
   it('orders within a lane and renumbers on insert', () => {
     let board = withTasks(['one', 'two', 'three']);
-    board = moveTask(board, 'three', 'todo', 0);
-    expect(tasksInLane(board, 'todo').map((t) => t.id)).toEqual(['three', 'one', 'two']);
+    board = moveTask(board, 'one', 'todo', 0);
+    expect(tasksInLane(board, 'todo').map((t) => t.id)).toEqual(['one', 'three', 'two']);
   });
 
-  it('moves between lanes and appends at the end', () => {
+  it('moves between lanes', () => {
     let board = withTasks(['one', 'two']);
     board = moveTask(board, 'one', 'doing', 0);
     expect(tasksInLane(board, 'doing').map((t) => t.id)).toEqual(['one']);
@@ -72,11 +77,11 @@ describe('moving tasks', () => {
     expect(moveTask(board, 'one', 'nope', 0)).toBe(board);
   });
 
-  it('updateTask moving lanes puts the task at the end of the new one', () => {
+  it('updateTask moving lanes puts the task at the top of the new one', () => {
     let board = withTasks(['one', 'two', 'three']);
     board = moveTask(board, 'two', 'doing', 0);
     board = updateTask(board, 'one', { laneId: 'doing' });
-    expect(tasksInLane(board, 'doing').map((t) => t.id)).toEqual(['two', 'one']);
+    expect(tasksInLane(board, 'doing').map((t) => t.id)).toEqual(['one', 'two']);
   });
 });
 

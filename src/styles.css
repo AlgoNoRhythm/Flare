@@ -3085,6 +3085,207 @@ button.btn.warn {
   margin-top: 5px;
 }
 
+/* ---------- the index rail: the ring, unrolled ----------------------
+ *
+ * Left, and reserved rather than floating: the wheel is laid out around the
+ * space that is left, so nothing ever spins underneath this. Reads as the file
+ * tree on purpose — same row height, same swatch-then-name rhythm — because it
+ * is answering the file tree's question ("where is X") about a picture that
+ * otherwise has no answer to it.
+ */
+.wheel-index {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  bottom: 0;
+  width: 212px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--n1) 82%, transparent);
+  backdrop-filter: blur(3px);
+  cursor: default;
+}
+
+/*
+ * Closed, it is a drawer tab on the left edge — not a button in the corner.
+ *
+ * The corner is taken twice over: the toolbar and the folder legend own the
+ * top-left, the canvas tools the bottom-left. Halfway down the edge is the one
+ * place a handle can sit without being buried, and a tab there reads as "this
+ * pulls out" in a way a stray chevron does not.
+ */
+.wheel-index.collapsed {
+  width: auto;
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  border-right: 0;
+  background: none;
+  backdrop-filter: none;
+}
+
+.wheel-index-toggle {
+  appearance: none;
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--n9);
+  cursor: pointer;
+}
+
+.wheel-index.collapsed .wheel-index-toggle {
+  border: 1px solid var(--n5);
+  border-left: 0;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  background: color-mix(in srgb, var(--n1) 92%, transparent);
+  box-shadow: var(--shadow-2);
+  padding: 14px 6px;
+  font-size: 12px;
+  color: var(--n11);
+}
+
+.wheel-index-toggle:hover {
+  color: var(--n13);
+}
+
+.wheel-index-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 10px;
+}
+
+/* the cluster band, as a sticky header — the same grouping the ring shows */
+.wheel-index-dir {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 4px;
+  background: var(--n2);
+  border-bottom: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--n11);
+  cursor: pointer;
+}
+
+.wheel-index-dir:hover {
+  color: var(--n13);
+}
+
+.wheel-index-dir.folded .wheel-index-dirname {
+  opacity: 0.6;
+}
+
+.wheel-index-dirname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.wheel-index-count {
+  font-size: 9.5px;
+  color: var(--n8);
+  font-variant-numeric: tabular-nums;
+}
+
+.wheel-index-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 18px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--n11);
+  cursor: pointer;
+}
+
+.wheel-index-row:hover {
+  background: var(--n3);
+  color: var(--n13);
+}
+
+.wheel-index-row.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--n13);
+}
+
+.wheel-index-row.multi-selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* pinned is the wheel's own state — the rail shows it rather than inventing one */
+.wheel-index-row.pinned .wheel-index-name {
+  font-weight: 600;
+  color: var(--n13);
+}
+
+/* the search filter dims here exactly as it dims on the ring */
+.wheel-index-row.miss {
+  opacity: 0.32;
+}
+
+.wheel-index-row.dir .wheel-index-name {
+  font-style: italic;
+}
+
+/* the node's own colour under the active lens: the rail is coloured by the
+   same rule as the dot it points at, so the two can be matched by eye */
+.wheel-index-swatch {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.wheel-index-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wheel-index-unrev {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/*
+ * The left-edge chrome steps aside for the rail.
+ *
+ * The toolbar overlay (and the folder legend hanging under it) and the canvas
+ * tools are all pinned to the left, which is where the rail now is — without
+ * this they sit on top of it and swallow its clicks. Driven by `:has()` rather
+ * than by a prop so it follows the rail's own collapse toggle with nothing to
+ * keep in sync.
+ */
+.graph-pane:has(.wheel-index:not(.collapsed)) .graph-overlay {
+  left: 222px;
+}
+
+.graph-pane:has(.wheel-index:not(.collapsed)) .canvas-tools {
+  left: 226px;
+}
+
 /* ---------- districts (treemap) view ---------- */
 .districts-view {
   position: absolute;
@@ -5727,6 +5928,27 @@ button.btn:disabled {
   border-radius: 999px;
 }
 
+/*
+ * How much bigger the set gets — part of the label, not a tooltip.
+ *
+ * "+37" beside "Copy connected" is the difference between an action you take
+ * on purpose and one you undo. Dimmer than the label so it reads as a
+ * quantity attached to it rather than a second word.
+ */
+.bulk-plus {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--n4);
+  color: var(--n10);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bulk-bar .btn:disabled .bulk-plus {
+  background: transparent;
+}
+
 /* ---- waiting, and knowing what for ---------------------------------- */
 
 .spinner {
@@ -6592,6 +6814,35 @@ button.btn:disabled {
   gap: 22px;
 }
 
+/*
+ * Wider once there is a map in it — but only a little.
+ *
+ * A picture of the night needs room to be a shape rather than a smear, and
+ * the rows still have to read as a short list rather than as a column down
+ * one side of a wide sheet. 820 is where a forty-file night is legible and
+ * the headline still sits over the text it belongs to.
+ */
+.briefing-sheet.with-map {
+  width: min(820px, 100%);
+}
+
+/*
+ * The night, drawn.
+ *
+ * Capped rather than sized to its contents: it is a caption on the graph, not
+ * the graph, and a map that grows with the change would push the rows — the
+ * things that actually want an answer — off the bottom of a busy night. The
+ * canvas fits its own content into whatever height it is given.
+ */
+.briefing-map {
+  position: relative;
+  height: clamp(160px, 30vh, 260px);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--n2);
+}
+
 .briefing-head {
   display: flex;
   align-items: baseline;
@@ -6719,6 +6970,31 @@ button.btn:disabled {
 
 .briefing-skip:hover {
   color: var(--n13);
+}
+
+/*
+ * The off switch: pushed to the far edge, and quieter than "Skip".
+ *
+ * Three ways out of one sheet is one more than a surface this small wants, so
+ * the ordering does the work — primary, then the ordinary way out, then a gap,
+ * then the permanent one. Nobody reaches this by accident, and nobody who
+ * wants it has to go looking through a menu for it either.
+ */
+.briefing-mute {
+  appearance: none;
+  background: none;
+  border: 0;
+  margin-left: auto;
+  padding: 4px 2px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--n8);
+  cursor: pointer;
+}
+
+.briefing-mute:hover {
+  color: var(--n11);
+  text-decoration: underline;
 }
 
 /* ---------------------------------------------------------------

@@ -271,6 +271,40 @@ export class GraphBuilder {
 }
 
 /**
+ * A set of files plus everything that imports them, at any depth.
+ *
+ * The same question `impact_of` answers over MCP and the same one the node
+ * badge counts: *if I change these, what else is in the way*. Importers only,
+ * deliberately — walking downstream as well would, in a repo where anything
+ * imports a shared type, return the repo. The direction that bounds itself is
+ * the useful one.
+ *
+ * Seeds come back in the set: every caller here wants "these files, and what
+ * they would take with them" rather than the radius on its own, and a copy
+ * that omitted the file you selected would be a strange thing to paste.
+ */
+export function withBlastRadius(seeds: Iterable<string>, edges: Iterable<GraphEdge>): string[] {
+  const importers = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = importers.get(e.target);
+    if (list) list.push(e.source);
+    else importers.set(e.target, [e.source]);
+  }
+  const seen = new Set(seeds);
+  const queue = [...seen];
+  while (queue.length > 0) {
+    const cur = queue.pop()!;
+    for (const up of importers.get(cur) ?? []) {
+      if (!seen.has(up)) {
+        seen.add(up);
+        queue.push(up);
+      }
+    }
+  }
+  return [...seen].sort();
+}
+
+/**
  * Iterative Tarjan SCC. Returns node -> component id for components with more
  * than one node (i.e. real import cycles).
  */

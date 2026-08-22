@@ -350,9 +350,19 @@ export function slugify(text: string, taken: ReadonlySet<string> = new Set()): s
   }
 }
 
-function nextPosition(board: Board, laneId: string): number {
+/**
+ * Where a task lands when nobody said where: the top of its lane.
+ *
+ * A lane reads newest-first, so the card just filed — or just moved into
+ * `In progress` — is the one in front of you, rather than the one you reach by
+ * scrolling past a month of finished work. Positions still order a lane, so
+ * dragging a card overrides this; they are simply allowed to go negative,
+ * which is what lets a new card sit above the existing ones without
+ * renumbering the lane.
+ */
+function topPosition(board: Board, laneId: string): number {
   const inLane = board.tasks.filter((t) => t.laneId === laneId);
-  return inLane.length === 0 ? 0 : Math.max(...inLane.map((t) => t.position)) + 1;
+  return inLane.length === 0 ? 0 : Math.min(...inLane.map((t) => t.position)) - 1;
 }
 
 export interface NewTask {
@@ -375,7 +385,7 @@ export function createTask(board: Board, input: NewTask, now = Date.now()): { bo
     paths: [...new Set(input.paths ?? [])],
     createdAt: now,
     updatedAt: now,
-    position: nextPosition(board, laneId),
+    position: topPosition(board, laneId),
     notes: [],
   };
   return { board: { ...board, tasks: [...board.tasks, task] }, task };
@@ -398,8 +408,8 @@ export function updateTask(
         ...patch,
         laneId,
         paths: patch.paths ? [...new Set(patch.paths)] : t.paths,
-        // moving to a lane puts it at that lane's end unless reordered after
-        position: laneId !== t.laneId ? nextPosition(board, laneId) : t.position,
+        // moving to a lane puts it at that lane's top unless reordered after
+        position: laneId !== t.laneId ? topPosition(board, laneId) : t.position,
         updatedAt: now,
       };
     }),
@@ -443,7 +453,7 @@ export function moveTask(board: Board, id: string, laneId: string, index: number
 export function tasksInLane(board: Board, laneId: string): Task[] {
   return board.tasks
     .filter((t) => t.laneId === laneId)
-    .sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+    .sort((a, b) => a.position - b.position || b.createdAt - a.createdAt);
 }
 
 // ---------------------------------------------------------------- lanes

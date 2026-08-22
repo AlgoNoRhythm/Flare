@@ -17,6 +17,19 @@ import type { ReviewInfo } from '../api';
 const LABEL_GAP = 7;
 const CLUSTER_GAP_SLOTS = 1.6;
 
+/**
+ * Width of the index rail, and the room the wheel gives up for it.
+ *
+ * The ring is the only view here that cannot be read by name. Every node is a
+ * dot at an angle, and finding `resolver.ts` among six hundred of them means
+ * spinning the wheel and reading labels at whatever rotation they land at.
+ * The rail is that same ring unrolled into a column you can scroll: same
+ * order, same colours, same grouping — so scrolling down the list is walking
+ * clockwise round the wheel, and the two are obviously one thing rather than
+ * a picture with a menu beside it.
+ */
+const INDEX_W = 212;
+
 interface Leaf {
   node: RenderNode;
   angle: number;
@@ -88,6 +101,9 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
   const [rot, setRot] = useState(-Math.PI / 2);
   const [pinned, setPinned] = useState<string | null>(null);
   const [selectRect, setSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  /** the index rail, open by default — it is how you find a file by name here */
+  const [indexOpen, setIndexOpen] = useState(true);
+  const indexBodyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     clusterColorRef.current = makeClusterColors();
@@ -120,9 +136,13 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
     // the toolbar overlay covers the top strip — push the wheel below it and
     // reserve exactly as much room as the longest leaf label needs
     const TOP = 56;
-    const cx = size.w / 2;
+    // the rail is reserved rather than overlaid: a wheel centred under a panel
+    // has its left third permanently behind it, and spinning to read a label
+    // that never comes out from under the rail is a trap
+    const LEFT = indexOpen ? INDEX_W : 0;
+    const cx = LEFT + (size.w - LEFT) / 2;
     const cy = TOP + (size.h - TOP) / 2;
-    const avail = Math.min(size.w, size.h - TOP) / 2 - 14;
+    const avail = Math.min(size.w - LEFT, size.h - TOP) / 2 - 14;
     // the 85th percentile, not the max — one very long filename shouldn't
     // shrink the whole wheel
     const widths = derived.nodes
@@ -205,7 +225,25 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
 
     return { leaves, arcs, edges, cx, cy, R, bandR, out, inc, count: derived.nodes.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphVersion, fullNodes, fullEdges, collapsedDirs, expandedFiles, symbolGraphs, size, rot]);
+  }, [graphVersion, fullNodes, fullEdges, collapsedDirs, expandedFiles, symbolGraphs, size, rot, indexOpen]);
+
+  /**
+   * The ring, unrolled.
+   *
+   * Read straight off `model.leaves`, which is a Map built in ring order — so
+   * this cannot drift out of step with the wheel by construction, which is the
+   * one property that makes the rail worth having. Grouped the way the file
+   * tree groups, by directory, with the same headers the cluster bands carry.
+   */
+  const indexGroups = useMemo(() => {
+    const groups: { cluster: string; leaves: Leaf[] }[] = [];
+    for (const leaf of model.leaves.values()) {
+      const last = groups[groups.length - 1];
+      if (last && last.cluster === leaf.cluster) last.leaves.push(leaf);
+      else groups.push({ cluster: leaf.cluster, leaves: [leaf] });
+    }
+    return groups;
+  }, [model]);
 
   const lensCtx = useMemo<LensContext>(() => {
     return buildLensContext(fullNodes.values(), {
@@ -477,6 +515,40 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
     onSelect(n.id);
   };
 
+  /**
+   * A row in the rail is the node it names.
+   *
+   * It does one thing the node itself does not: it spins the wheel so the node
+   * lands at the top. Clicking a name in a list and having something light up
+   * behind your cursor, off at four o'clock, is not selecting it on the wheel
+   * — bringing it round to where you are looking is.
+   */
+  const onIndexClick = (e: React.MouseEvent, leaf: Leaf) => {
+    e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      onToggleSelect(leaf.node.id);
+      return;
+    }
+    setRot((r) => r + (-Math.PI / 2 - leaf.angle));
+    setPinned(leaf.node.id);
+    onSelect(leaf.node.id);
+  };
+
+  /*
+   * Selecting on the wheel scrolls the rail to match.
+   *
+   * Without this the two halves agree only while you drive from the list —
+   * click a dot on the ring and the name of what you just picked is somewhere
+   * up in four hundred rows you would have to hunt through.
+   */
+  useEffect(() => {
+    if (!indexOpen || !selected) return;
+    const body = indexBodyRef.current;
+    if (!body) return;
+    const row = body.querySelector(`[data-wid="${CSS.escape(selected)}"]`);
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [selected, indexOpen, indexGroups]);
+
   const onNodeDoubleClick = (e: React.MouseEvent, n: RenderNode) => {
     e.stopPropagation();
     if (n.kind === 'dir') {
@@ -513,6 +585,111 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
         onNodeContextMenu({ x: e.clientX, y: e.clientY, id: g?.dataset.id ?? null });
       }}
     >
+      {/*
+        The index rail. Stops its own scroll and drag from reaching the wheel
+        behind it — a flick of the wheel over a list is a scroll, not a zoom.
+      */}
+      <div
+        className={`wheel-index${indexOpen ? '' : ' collapsed'}`}
+        data-testid="wheel-index"
+        onMouseDown={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => e.stopPropagation()}
+      >
+        <button
+          className="wheel-index-toggle"
+          data-testid="wheel-index-toggle"
+          title={indexOpen ? 'Hide the file list and give the room to the wheel' : 'Show the file list'}
+          aria-expanded={indexOpen}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIndexOpen((v) => !v);
+          }}
+        >
+          {indexOpen ? `‹ ${model.count} files` : '›'}
+        </button>
+        {indexOpen && (
+          <div className="wheel-index-body" ref={indexBodyRef}>
+            {indexGroups.map((group) => (
+              <div className="wheel-index-group" key={group.cluster}>
+                <div
+                  className={`wheel-index-dir${collapsedDirs.has(group.cluster) ? ' folded' : ''}`}
+                  data-testid={`wheel-index-dir-${group.cluster}`}
+                  title={`${group.cluster} — click to ${collapsedDirs.has(group.cluster) ? 'expand' : 'collapse'} on the wheel`}
+                  onClick={() => group.cluster !== '(root)' && onToggleDir(group.cluster)}
+                  onMouseEnter={() => {
+                    hoverClusterRef.current = group.cluster;
+                    applyHighlight();
+                  }}
+                  onMouseLeave={() => {
+                    hoverClusterRef.current = null;
+                    applyHighlight();
+                  }}
+                >
+                  <span
+                    className="wheel-index-swatch"
+                    style={{
+                      background: clusterColorRef.current(group.cluster === '(root)' ? '' : group.cluster),
+                    }}
+                  />
+                  <span className="wheel-index-dirname">
+                    {group.cluster === '(root)' ? '/' : group.cluster}
+                  </span>
+                  <span className="wheel-index-count">{group.leaves.length}</span>
+                </div>
+                {group.leaves.map((leaf) => {
+                  const n = leaf.node;
+                  const label = n.kind === 'dir' ? folderLabel(n.dir?.dir ?? n.cluster) : n.label;
+                  const color = n.file
+                    ? lensColor(n.file, lensCtx)
+                    : clusterColorRef.current(n.cluster === '(root)' ? '' : n.cluster);
+                  const cls = [
+                    'wheel-index-row',
+                    n.kind === 'dir' ? 'dir' : '',
+                    selected === n.id ? 'selected' : '',
+                    selectedPaths.has(n.id) ? 'multi-selected' : '',
+                    pinned === n.id ? 'pinned' : '',
+                    query !== '' && !n.id.toLowerCase().includes(query) ? 'miss' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ');
+                  return (
+                    <div
+                      key={n.id}
+                      className={cls}
+                      data-wid={n.id}
+                      data-testid={`wheel-index-row-${n.id}`}
+                      title={n.id}
+                      onClick={(e) => onIndexClick(e, leaf)}
+                      onDoubleClick={(e) => onNodeDoubleClick(e, n)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onNodeContextMenu({ x: e.clientX, y: e.clientY, id: n.id });
+                      }}
+                      onMouseEnter={() => {
+                        hoverRef.current = n.id;
+                        applyHighlight();
+                      }}
+                      onMouseLeave={() => {
+                        hoverRef.current = null;
+                        applyHighlight();
+                      }}
+                    >
+                      <span className="wheel-index-swatch" style={{ background: color }} />
+                      <span className="wheel-index-name">{label}</span>
+                      {isUnreviewed(n.id, changedAt, reviewInfo) && (
+                        <span className="wheel-index-unrev" title="changed since you last reviewed it" />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <svg className="wheel-svg" width={size.w} height={size.h}>
         <defs>
           {/* the corona: light leaving the core, dying out before the rim so it
