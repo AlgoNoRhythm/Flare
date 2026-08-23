@@ -14,3 +14,5 @@ coverage/
 .claude/
 .claude.json
 CLAUDE.md
+# icon renders for launches and listings — regenerate with npm run icon
+/brand/
