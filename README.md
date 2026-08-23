@@ -23,12 +23,14 @@ rather than at a chat log.*
 
 ## What you get
 
-![Flare showing its own source: the Activity lens after an agent edited seven files, with one node hovered so its importers are highlighted](docs/flare-graph.png)
+![Flare open on its own source with the Activity lens on: shared/graph.ts is hovered and every file that imports it is lit in amber, while a risky-change alert about src/App.tsx sits in the corner](docs/flare-graph.png)
 
-*Flare open on its own source. The Activity lens highlights the seven files an
-agent just edited, and hovering `shared/types.ts` highlights every file that
-imports it — the blast radius of one file, without reconstructing it from a
-grep.*
+*Flare open on its own source — 99 nodes, 326 edges. The Activity lens shades
+each file by how recently it changed, and hovering `shared/graph.ts` lights
+every file that imports it in amber: the blast radius of one file, without
+reconstructing it from a grep. Bottom right, an alert Flare raised on its own
+about `src/App.tsx` — nothing covers it, and with two agents live it says
+`mixed` rather than guessing which of them wrote it.*
 
 ### Three views of the same graph
 
