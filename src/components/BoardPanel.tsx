@@ -20,6 +20,8 @@ import { toast } from './Toasts';
 import { DecisionsSection, QuestionsSection } from './Collaboration';
 import { TaskModal } from './TaskModal';
 import { RoutineWizard } from './RoutineWizard';
+import { HintNote } from './HintNote';
+import { IconCopy, IconExpand, IconGear } from './icons';
 import type { ModalRequest } from './Menus';
 
 type Section = 'tasks' | 'decisions' | 'questions';
@@ -100,7 +102,7 @@ export function BoardPanel({
     setDraft({ title: task.title, brief: task.brief, paths: task.paths.join('\n') });
   };
 
-  const commitEdit = (id: string) => {
+  const commitEdit = (id: string, asDraft = false) => {
     onChange(
       updateTask(board, id, {
         title: draft.title,
@@ -109,17 +111,35 @@ export function BoardPanel({
           .split(/[\n,]/)
           .map((p) => p.trim().replace(/\\/g, '/'))
           .filter(Boolean),
+        // saving properly is what turns a draft back into a card
+        draft: asDraft,
       }),
     );
     setEditing(null);
   };
 
+  /**
+   * Leave without saving. A card that was created a moment ago and never
+   * given a word is not a task, it is a mis-click — it goes. Anything with
+   * content stays exactly as it was before the edit began.
+   */
+  const discardEdit = (task: Task) => {
+    const untouched =
+      task.title === 'New task' && task.brief === '' && task.paths.length === 0 && task.notes.length === 0;
+    if (untouched) onChange(deleteTask(board, task.id));
+    setEditing(null);
+  };
+
+  /*
+   * "+ Task" makes an empty card. It used to attach whatever was selected on
+   * the graph, which is right when you asked for a task *about* those files
+   * (the New task button on a node, the bulk bar) and a surprise otherwise —
+   * a selection left over from an hour ago is not a brief. Those two doors
+   * still carry their files; this one starts blank, and the modal offers the
+   * selection as one click if it is wanted.
+   */
   const addTask = (laneId: string) => {
-    const result = createTask(board, {
-      title: 'New task',
-      laneId,
-      paths: [...selectedPaths],
-    });
+    const result = createTask(board, { title: 'New task', laneId, paths: [] });
     onChange(result.board);
     startEdit(result.task);
   };
@@ -186,7 +206,7 @@ export function BoardPanel({
           onClick={() => setWizardOpen(true)}
           data-testid="board-routine"
         >
-          ⚙︎ Routine{board.routine ? '' : '…'}
+          <IconGear /> Routine{board.routine ? '' : '…'}
         </button>
         {section === 'tasks' && (
           <button
@@ -208,10 +228,10 @@ export function BoardPanel({
       </div>
 
       {section === 'tasks' && (
-        <div className="board-hint-row muted">
+        <HintNote id="board" className="board-hint-row muted">
           Cards are written to be pasted into an agent. Your agent can also read these lanes over MCP
           with <code>tasks_list</code>, and move a card with <code>task_update</code>.
-        </div>
+        </HintNote>
       )}
 
       {wizardOpen && (
@@ -295,8 +315,13 @@ export function BoardPanel({
                       className={`task-card${isEditing ? ' editing' : ''}`}
                       data-testid={`task-${task.id}`}
                       // a card is for scanning; everything you would open a
-                      // task *for* happens at full size
-                      onDoubleClick={() => startEdit(task)}
+                      // task *for* happens at full size. Controls opt out:
+                      // double-click in the note input selects a word, and
+                      // that must not rip the modal open under the caret.
+                      onDoubleClick={(e) => {
+                        if ((e.target as HTMLElement).closest('input, select, textarea, a')) return;
+                        startEdit(task);
+                      }}
                       draggable={!isEditing}
                       onDragStart={() => {
                         dragged.current = task.id;
@@ -320,6 +345,14 @@ export function BoardPanel({
                             the expand affordance, and "the title" should mean
                             the title */}
                         <span className="task-title-text">{task.title}</span>
+                        {task.draft && (
+                          <span
+                            className="task-draft"
+                            title="Saved as a draft — not offered to agents until you save it properly"
+                          >
+                            draft
+                          </span>
+                        )}
                         <button
                           className="task-expand"
                           title="Open this task at full size"
@@ -330,7 +363,7 @@ export function BoardPanel({
                             startEdit(task);
                           }}
                         >
-                          ⤢
+                          <IconExpand size={12} />
                         </button>
                       </div>
                       {task.brief && <div className="task-brief">{task.brief}</div>}
@@ -371,7 +404,7 @@ export function BoardPanel({
                               onClick={() => void copyForAgent(task)}
                               data-testid={`task-copy-${task.id}`}
                             >
-                              ⧉ Copy for agent
+                              <IconCopy size={12} /> Copy for agent
                             </button>
                             {/* editing was only reachable by clicking the title,
                                 which nothing on the card said you could do */}
@@ -419,9 +452,6 @@ export function BoardPanel({
 
                 <button className="lane-add" onClick={() => addTask(lane.id)} data-testid={`lane-add-${lane.id}`}>
                   + Task
-                  {selectedPaths.length > 0 && (
-                    <span className="muted"> with {selectedPaths.length} selected file{selectedPaths.length === 1 ? '' : 's'}</span>
-                  )}
                 </button>
               </div>
             </div>
@@ -444,7 +474,8 @@ export function BoardPanel({
           onDraft={setDraft}
           selectedPaths={selectedPaths}
           onSave={() => commitEdit(editingTask.id)}
-          onCancel={() => setEditing(null)}
+          onSaveDraft={() => commitEdit(editingTask.id, true)}
+          onCancel={() => discardEdit(editingTask)}
           onDelete={() => {
             onChange(deleteTask(board, editingTask.id));
             setEditing(null);

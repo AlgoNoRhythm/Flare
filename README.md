@@ -23,7 +23,7 @@ rather than at a chat log.*
 
 ## What you get
 
-![Flare open on its own source with the Activity lens on: shared/graph.ts is hovered and every file that imports it is lit in amber, while a risky-change alert about src/App.tsx sits in the corner](docs/flare-graph.png)
+![Flare open on its own source with the Activity lens on: shared/insights.ts is hovered and every file that imports it is lit as an amber ray, while the top bar counts the risky changes and the files waiting for review](docs/flare-graph.png)
 
 *Flare open on its own source — 99 nodes, 326 edges. The Activity lens shades
 each file by how recently it changed, and hovering `shared/graph.ts` lights
@@ -142,6 +142,82 @@ the active lens, cluster bands are coloured by directory.*
   and every agent write through one place, and a write made against a board
   that has moved on since is rebased rather than believed — so a click in the
   panel cannot delete the card an agent filed a second earlier.
+- **Channel — a room the agents talk in** — several agents on one repo do not
+  collide because they are careless; they collide because nothing tells them
+  what the others are already inside. Each one sees a clean tree, opens the
+  file its task points at, and finds out about the other when you read a diff
+  where two changes have been folded together with no seam.
+
+  Flare cannot lock the file. It watches a filesystem rather than sitting in
+  front of one, so a lock could only be a request an agent is free to ignore —
+  and one that silently fails open is worse than none, because everyone
+  downstream believes it held. What it can do is give them somewhere to talk,
+  and then draw what was said on the map. The **Channel** tab is that room:
+
+  ```
+  Claude 2  taking   shared/graph.ts, shared/resolver.ts
+                     moving the workspace lookup out of the resolver
+  Codex 1   asking   @Claude 2 — is shared/graph.ts free? I need the edge
+                     builder for the cycle fix
+  Claude 2  done     shared/resolver.ts — all yours
+  ```
+
+  Three habits, and the tool descriptions ask for all three: **say what you are
+  taking before you start** (`chat_post` with `kind: "taking"` and the paths —
+  files or whole folders), **read the room when you finish something**
+  (`chat_read`, which hands back only what you missed), and **ask by name**
+  when you want a file someone has spoken for. You are in the room on the same
+  terms: type into it from the panel and the agents read it back over MCP.
+
+  Nothing is refused. Two agents *may* both say they are taking the same file —
+  and when they do it is drawn as contention rather than resolved behind their
+  backs, at the top of the tab and as a two-tone mark on the graph, because the
+  two of them settling it is the only thing that actually settles it. An agent
+  that writes a file another agent had spoken for is not blocked either; the
+  crossing lands in the review with both names on it. Everything an agent says
+  lapses on its own, so a session that is killed mid-edit does not hold a
+  folder for the rest of the afternoon.
+
+  It reads as a chat, because it is one: bubbles, consecutive lines from one
+  speaker grouped under one name, your own posts on the right, and each agent
+  carrying a geometric mark — ● ◆ ▲ — assigned with its colour and never apart
+  from it, so the ▲ agent is the same amber one on the card, in the review and
+  in the room. The tool descriptions ask the agents to write prose a colleague
+  could read rather than status codes, and the prose is what the bubble leads
+  with.
+
+  Every line about files also **opens**. Everything said here is a claim, and
+  Flare is the only participant that watched what followed — so a turn expands
+  into what actually happened to the files it named: which the speaker went on
+  to write and when, which it never touched, and *who else wrote one of them
+  afterwards*. That last line cannot be got any other way, and the message it
+  crossed is where you are already looking when you want it.
+
+  The tab is also where you find out whether any of it is working. A busy feed
+  is not evidence of coordination, so the header carries the number that is:
+  **how many of the files the agents wrote this session had been announced here
+  first**, with a button that selects the ones that were not. Beside it, who is
+  in the room, what each said it is taking, and which of them has never once
+  called `chat_read` — an agent that posts and never listens looks exactly like
+  coordination right up until two of them collide. The transcript filters by
+  agent, by kind and by text, and every path in it is a click to the graph.
+- **Claude 1, Claude 2, Codex 1** — the identity everything above rests on. A
+  process list cannot tell two `claude` sessions apart (both are equally
+  "running" in every sample) and neither can the board (it attributes by path,
+  so an agent editing a file on someone else's card is recorded as them). The
+  MCP session can: it is minted on `initialize`, echoed back on every request,
+  and impossible for another client to answer to. Flare names each one from the
+  tool it says it is plus the next free number, and that name then follows it
+  everywhere — the ring on a node, the author of a change burst, the parties in
+  a crossing, the row in the roster. Numbers are never reused inside a session,
+  because a "Claude 1" that becomes a different agent halfway through would
+  merge two of them in every sentence that mentions it.
+
+  In the review, that shows up as a chip per agent above the change list —
+  name, files written, how many of its changes nothing has checked — and
+  clicking one narrows the list to that agent's work. One agent leaving all of
+  its changes unverified is a fact about that agent, and it is invisible when
+  its bursts are interleaved with two others' down a scrolling list.
 - **Review cockpit** — the tab that answers the questions a file-by-file diff
   can't. Changes are grouped into *bursts* (one batch of writes by one author),
   and each burst shows:
@@ -150,10 +226,39 @@ the active lens, cluster bands are coloured by directory.*
     files were edited and nothing re-ran"* — the states are verified / failed /
     **checked, then edited again** / never checked, always quoting the output
     line the verdict came from.
+  - **who did it.** Not "an agent" — *Claude 2*, in its own colour, with what
+    it was doing beside the name. With three of them on one repo that is the
+    difference between a list of changes and a list you can act on.
   - **what it was trying to do.** Agents call the `record_intent` MCP tool
-    before editing; otherwise the burst says so plainly, because reviewing an
-    agent's diff makes you the first human to see that code with nothing
-    explaining why it exists.
+    before editing — or say it in the channel, which counts as the same thing;
+    otherwise the burst says so plainly, because reviewing an agent's diff
+    makes you the first human to see that code with nothing explaining why it
+    exists.
+  - **what the session was about.** Everything else in the panel is derived
+    from what Flare watched; this is the one thing it has to be told, because
+    the answer does not exist in any single burst. It exists as a story, and
+    the only participant who knows the story is the agent that lived it — so
+    it is asked for, over MCP, before the session ends. `session_summary`
+    takes a headline and *chapters*: a line of prose per piece of work and the
+    files each one covers, and they sit at the top of the review, over the
+    diff they are about.
+
+    Not on trust, though. Flare watched the writes, so it binds every chapter
+    to the bursts underneath it and reports the three ways a story and a
+    session disagree: a chapter naming files that **never changed** (work
+    described that did not happen — the one kind of wrong you cannot catch
+    from a diff, because there is no diff to catch it in), files that changed
+    and **no chapter accounts for**, and chapters covering work **nothing has
+    verified**. That audit goes back to the agent in the tool's reply as well
+    as onto the screen, so the usual outcome is that it fixes its own summary
+    before anyone reads it:
+
+    ```
+    Your chapters account for 2 of the 3 files you changed.
+      "Left the workspace cache alone" names shared/cache.ts, which never
+      changed — say what you actually did to it, or drop it.
+      Not mentioned anywhere: src/components/ReviewPanel.tsx.
+    ```
   - **which files deserve attention.** Every file is tiered *read carefully /
     read / skim* from blast radius, coverage, cycles and complexity, with the
     reason spelled out ("9 files break if this is wrong", "no test covers it"),
@@ -169,11 +274,22 @@ the active lens, cluster bands are coloured by directory.*
     approving as you go.
 - **Risky changes come and find you** — the review tab is a tab, so a load-
   bearing file rewritten while you were reading the graph goes unnoticed until
-  you go and look. Those changes queue as alerts in the corner instead, one
-  card per file, newest first, staying put until answered: **Review** opens the
-  change on its row in the review panel, **Dismiss** stops that card, **Dismiss
-  all** clears the queue. Dismissing an alert is not approving the change — the
-  file stays flagged, unread and exactly as the agent left it. The bar is the
+  you go and look. Those changes queue behind a chip in the top bar instead,
+  beside the review count: a number you can see from across the room, and the
+  cards one click under it, newest first, staying put until answered.
+  **Review** opens the change on its row in the review panel, **Dismiss** stops
+  that card, **Dismiss all** clears the queue. Dismissing an alert is not
+  approving the change — the file stays flagged, unread and exactly as the
+  agent left it.
+
+  It is a chip rather than a floating panel because there is no corner for one.
+  The bottom-right is the terminal, where a card hides the output of the very
+  agent whose change it is reporting on; the top-right is where every tab keeps
+  its own controls, so a panel there sits on `+ Lane`, on `Re-layout`, on the
+  channel's composer, and swallows the clicks meant for them. A queue that is
+  usually non-empty during an agent session cannot be a panel. The transient
+  toasts keep that corner — they have no controls at all, so the whole stack is
+  click-through and can never eat the next thing you press. The bar is the
   *careful* tier plus something absolute (real dependents, a cycle, real
   complexity, no test at all), so a repo where nothing is load-bearing stays
   quiet rather than popping a card for its least boring file.
@@ -198,7 +314,9 @@ the active lens, cluster bands are coloured by directory.*
   claude / codex / opencode / aider / …; changes made while an agent runs are
   attributed to it (coloured node rings, trails on the graph, "changed by" in
   details), and every shell command run in the terminals lands in the
-  **Commands log** (▤ button in the terminal bar, persisted per project).
+  **Commands log** (▤ button in the terminal bar, persisted per project). That
+  is the *terminal* half of it — the MCP half, which is what tells two claudes
+  apart and puts a mark on the files each of them is inside, is the room above.
 - **Command palette** — Ctrl+K: fuzzy-jump to any file, `>` for commands,
   recent projects. Ctrl+B sidebar, Ctrl+W close tab, Ctrl+0 fit graph,
   Ctrl+=/− zoom, Esc collapses focus/drill-down. Full list under
@@ -227,12 +345,34 @@ the active lens, cluster bands are coloured by directory.*
   stable per-project slug the browser server uses — to the owning instance,
   proxying when needed and taking over the port when the holder exits. Bare
   `/mcp` works with a single session; with several it points the agent at
-  `list_projects`. Click the ⚡ MCP status-bar item to copy the project-scoped
-  setup command:
+  `list_projects`. **Connect agent**, in the terminal bar, opens a dialog with
+  the two steps — and they are genuinely two. Registering the server is a
+  config change you make once per machine, and it is different for each of the
+  three: a command for Claude Code, TOML for Codex, JSON for opencode, in
+  different files in different places.
 
   ```sh
   claude mcp add --transport http flare http://127.0.0.1:7345/mcp/<slug>
   ```
+
+  The second step is the one that is easy to skip and shouldn't be: **the line
+  you open the agent with**. Attaching the tools does not make an agent read
+  them, and everything this project expects — taking a card before starting it,
+  saying in the channel which files it is about to edit, writing the session
+  down before it stops — comes back from one call. So the dialog hands you a
+  message to paste, with the endpoint in it, that says to make that call first:
+
+  ```
+  This project is open in Flare, which is on MCP at http://127.0.0.1:7345/mcp/<slug>.
+
+  Start by calling `working_agreement` — it says how this project wants you to
+  work, what is on the board, and who else is in here. Then take the card it
+  points you at.
+  ```
+
+  It is deliberately short. A paragraph restating the protocol would be a
+  second copy of it, going stale the moment you change the ⚙︎ Routine — and the
+  agent is about to be handed the current version by the tool itself.
 
   Tools: `graph_overview`, `file_info`, `dependents`, `dependencies`,
   `find_path`, `issues`, `top_files`, `search`, `impact_of` (what breaks +
@@ -240,9 +380,10 @@ the active lens, cluster bands are coloured by directory.*
   `verification_status` (did my changes actually get checked?),
   `record_intent` (state the goal before editing, so the human reviewing the
   diff isn't reconstructing it), the board tools — `tasks_list`, `task_get`,
-  `task_update`, `task_create` — and the collaboration tools:
-  `decision_record`, `decisions_list`, `question_ask`, `questions_list`, and
-  `working_agreement` for what to do next. The agent asks the IDE about the
+  `task_update`, `task_create` — the collaboration tools: `decision_record`,
+  `decisions_list`, `question_ask`, `questions_list`, and `working_agreement`
+  for what to do next — and the tools for working alongside other agents:
+  `chat_post`, `chat_read` and `agents_list`. The agent asks the IDE about the
   codebase instead of re-deriving it.
 - **Workspace restore** — tabs, lens, active view, panel sizes, collapse
   state, node positions and window bounds all persist per project.
@@ -277,8 +418,8 @@ the active lens, cluster bands are coloured by directory.*
 ## Testing
 
 ```sh
-npm test          # 421 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse)
-npm run e2e       # 77 Playwright tests: 53 driving the real Electron app, 24 driving a browser
+npm test          # 633 vitest unit tests (parser, resolver, graph, scanner, git, shadow, store, reuse, roster, channel)
+npm run e2e       # 80 Playwright tests: 56 driving the real Electron app, 24 driving a browser
 npm run verify    # build + unit + e2e
 ```
 
@@ -390,7 +531,7 @@ binaries and breaks the Windows checkout.
 ```sh
 cp -r /mnt/c/path/to/Flare ~/flare && cd ~/flare && npm ci
 npx playwright install chromium
-npm test && npx playwright test            # 421 unit + 77 e2e, on Linux
+npm test && npx playwright test            # 633 unit + 80 e2e, on Linux
 npx electron-builder --linux --publish never
 ```
 

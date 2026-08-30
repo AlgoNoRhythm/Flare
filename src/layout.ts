@@ -34,3 +34,26 @@ export const TERMINAL_MIN_H = 80;
 export function clampTerminal(height: number, windowHeight: number): number {
   return Math.max(TERMINAL_MIN_H, Math.min(height, Math.max(120, windowHeight - GRAPH_MIN_H)));
 }
+
+/** The terminal's share of a fresh window, and the most it may open with. */
+export const TERMINAL_OPEN_SHARE = 0.18;
+export const TERMINAL_OPEN_MAX_SHARE = 0.3;
+
+/**
+ * What the terminal opens at.
+ *
+ * The graph is the home surface, so on open it always has the bigger half:
+ * a fresh window gives the terminal a fifth, and a height carried over from
+ * the last session is honoured only up to a third — a terminal dragged tall
+ * to read a log yesterday must not be what greets the project today. The
+ * splitter is free to go past this once the window is up; this is only what
+ * the first frame looks like.
+ */
+export function openingTerminalHeight(saved: number | undefined, windowHeight: number): number {
+  const cap = Math.round(windowHeight * TERMINAL_OPEN_MAX_SHARE);
+  const wanted =
+    saved && saved > 0
+      ? Math.min(saved, cap)
+      : Math.max(150, Math.min(320, Math.round(windowHeight * TERMINAL_OPEN_SHARE)));
+  return clampTerminal(wanted, windowHeight);
+}

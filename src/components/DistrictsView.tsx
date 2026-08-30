@@ -106,6 +106,7 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
     lens,
     collapsedDirs,
     conflicts,
+    held,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -403,8 +404,8 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
             {b.collapsed && b.h > 46 && (
               <div className="dblock-collapsed-note">
                 {plural(b.count, 'file')} · {num(b.loc)} loc
-                <br />
-                click the header to expand
+                {/* said once per pointer, not seven times per screen */}
+                <span className="dblock-howto">click the header to expand</span>
               </div>
             )}
           </div>
@@ -416,9 +417,12 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
           const intensity = 0.26 + lensValue(n, lensCtx, maxCx) * 0.7;
           const unrev = isUnreviewed(n.id, changedAt, reviewInfo);
           const agent = changedBy[n.id];
+          const spoken = held?.get(n.id) ?? [];
+          const claim = spoken.length > 0;
           const miss = query !== '' && !n.id.toLowerCase().includes(query);
           const cls = [
             'dtile',
+            claim ? 'claimed' : '',
             selected === n.id ? 'sel' : '',
             selectedPaths.has(n.id) && selected !== n.id ? 'msel' : '',
             related?.has(n.id) ? 'rel' : '',
@@ -435,14 +439,23 @@ export const DistrictsView = forwardRef<GraphViewHandle, CanvasProps>(function D
               className={cls}
               data-id={n.id}
               data-testid={`dtile-${n.id}`}
-              style={{
-                left: t.x,
-                top: t.y,
-                width: Math.max(1, t.w - 2),
-                height: Math.max(1, t.h - 2),
-                background: mixHex(surface(), base, intensity),
-              }}
-              title={`${n.id}\n${n.loc} loc · cx ${n.complexity}${coverage[n.id] ? ` · ${Math.round(coverage[n.id].pct)}% covered` : ''}`}
+              style={
+                {
+                  left: t.x,
+                  top: t.y,
+                  width: Math.max(1, t.w - 2),
+                  height: Math.max(1, t.h - 2),
+                  background: mixHex(surface(), base, intensity),
+                  ...(claim ? { '--agent': agentColor(spoken[0].agentId) } : {}),
+                } as React.CSSProperties
+              }
+              title={`${n.id}\n${n.loc} loc · cx ${n.complexity}${coverage[n.id] ? ` · ${Math.round(coverage[n.id].pct)}% covered` : ''}${
+                claim
+                  ? `\nbeing worked on by ${[...new Set(spoken.map((s) => s.agentName))].join(' and ')}${
+                      spoken[0].text ? ` — ${spoken[0].text}` : ''
+                    }`
+                  : ''
+              }`}
               onClick={(e) => {
                 e.stopPropagation();
                 if (e.ctrlKey || e.metaKey) onToggleSelect(n.id);

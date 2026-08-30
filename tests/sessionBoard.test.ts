@@ -30,6 +30,8 @@ const NOTHING = {
   onCommandUpdate: () => {},
   onDangerousCommand: () => {},
   onBoard: () => {},
+  onAgents: () => {},
+  onSummaries: () => {},
 };
 
 beforeEach(() => {

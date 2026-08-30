@@ -14,6 +14,7 @@ const page = await app.firstWindow();
 await page.waitForSelector('[data-testid="graph-container"]', { timeout: 20000 });
 await page.setViewportSize({ width: 1600, height: 950 });
 await page.waitForTimeout(3000);
+await page.getByTestId('lens-menu').click();
 await page.getByTestId('lens-coverage').click();
 await page.getByTestId('legend-shared').click();
 await page.waitForTimeout(1500);

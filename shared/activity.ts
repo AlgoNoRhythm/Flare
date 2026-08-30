@@ -56,6 +56,14 @@ export interface ChangeBurst {
    * about *who* should go through `agentIdOf` in shared/conflicts.ts.
    */
   agentId?: string;
+  /**
+   * Who it was — 'Claude 2' — when the write reached an MCP session we know.
+   *
+   * Separate from `agentLabel` because they answer different questions and a
+   * review needs both: *who* did this, and *what* were they doing. Absent when
+   * attribution never got past the tool name.
+   */
+  agentName?: string;
   /** What to call that agent: the board task it claimed, else the tool name. */
   agentLabel?: string;
   changed: string[];

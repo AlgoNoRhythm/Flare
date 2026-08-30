@@ -12,4 +12,4 @@
  * `tests/version.test.ts` asserts this equals the manifest, so the two cannot
  * drift again without the suite saying so.
  */
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '2.0.0';

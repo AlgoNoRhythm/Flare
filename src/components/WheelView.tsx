@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { STATUS, makeClusterColors } from '../theme';
 import { agentColor } from '../graph/lenses';
 import { conflictMarks } from '../../shared/conflicts';
+import { noticesUnder } from '../../shared/channel';
 import { buildLensContext, lensColor, type LensContext } from '../graph/lensColor';
 import { deriveRenderModel, folderLabel, parseSymbolNode, type RenderNode } from '../graph/renderModel';
 import type { CanvasProps, GraphViewHandle } from './CanvasView';
@@ -82,6 +83,7 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
     expandedFiles,
     symbolGraphs,
     conflicts,
+    held,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -778,6 +780,16 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
                     applyHighlight();
                   }}
                 >
+                  {/* the tether: without it a short folded arc floats in the
+                      margin like a brush stroke, visually unowned by the ring */}
+                  <line
+                    className="warc-tick"
+                    x1={model.cx + Math.cos(a.mid) * (model.R + 6)}
+                    y1={model.cy + Math.sin(a.mid) * (model.R + 6)}
+                    x2={model.cx + Math.cos(a.mid) * (model.bandR - 7)}
+                    y2={model.cy + Math.sin(a.mid) * (model.bandR - 7)}
+                    stroke={color}
+                  />
                   <path
                     id={pathId}
                     d={arcPath(model.cx, model.cy, model.bandR, a.a0, a.a1, reverse)}
@@ -809,6 +821,13 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
                   : clusterColorRef.current(n.cluster === '(root)' ? '' : n.cluster);
                 const unrev = n.kind !== 'dir' && isUnreviewed(n.id, changedAt, reviewInfo);
                 const agent = changedBy[n.id];
+                /* a folder dot answers for what is inside it, notices included */
+                const spoken = held
+                  ? n.kind === 'dir' && n.dir
+                    ? noticesUnder(held, n.dir.dir)
+                    : (held.get(n.id) ?? [])
+                  : [];
+                const claim = spoken[0] ?? null;
                 const miss = query !== '' && !n.id.toLowerCase().includes(query);
                 const deg = ((leaf.angle * 180) / Math.PI + 360) % 360;
                 const flip = deg > 90 && deg < 270;
@@ -894,6 +913,28 @@ export const WheelView = forwardRef<GraphViewHandle, CanvasProps>(function Wheel
                       ))}
                     {unrev && now - (changedAt[n.id] ?? 0) < 90_000 && (
                       <circle className="pulsering" cx={leaf.x} cy={leaf.y} r={leaf.r + 3.5} />
+                    )}
+                    {/*
+                      A claim sits *outside* the change ring rather than
+                      replacing it: "somebody is in here now" and "somebody
+                      wrote this and nobody has read it" are both true of the
+                      same file often enough that showing one instead of the
+                      other would hide half of a night.
+                    */}
+                    {claim && (
+                      <circle
+                        className="claimring"
+                        cx={leaf.x}
+                        cy={leaf.y}
+                        r={leaf.r + 6.5}
+                        stroke={agentColor(claim.agentId)}
+                      >
+                        <title>
+                          {`${[...new Set(spoken.map((s) => s.agentName))].join(' and ')} said ${
+                            spoken.length > 1 ? 'they are' : 'it is'
+                          } working on this${claim.text ? ` — ${claim.text}` : ''}`}
+                        </title>
+                      </circle>
                     )}
                     <text
                       className="wlabel"

@@ -6,6 +6,8 @@ import type { ProjectSession } from '../electron/session';
 import { McpServer, identify } from '../electron/services/mcp';
 import { McpRegistry } from '../electron/services/mcpRegistry';
 import { SlugBook } from '../electron/services/slugs';
+import { AgentRegistry } from '../electron/services/roster';
+import { auditSummary, type Chapter, type SessionSummary } from '../shared/session';
 import {
   createTask,
   emptyBoard,
@@ -48,11 +50,20 @@ function fakeSession(board: Board): {
   session: ProjectSession;
   board: () => Board;
   claimed: Map<string, string>;
+  agents: AgentRegistry;
 } {
   let current = board;
   const claimed = new Map<string, string>();
+  /*
+   * A real registry, not a stub. It is the identity layer every tool call goes
+   * through — the dispatcher touches it on every call — and the room the chat
+   * tools read and write, so faking it would be faking the thing under test.
+   */
+  const agents = new AgentRegistry(() => {});
+  let summaries: SessionSummary[] = [];
   const session = {
     root: '/tmp/project',
+    agents,
     getBoard: () => current,
     setBoard: (next: Board) => {
       current = next;
@@ -62,8 +73,26 @@ function fakeSession(board: Board): {
     noteClaim: (callerId: string | null, title: string) => {
       if (callerId) claimed.set(callerId, title);
     },
+    setIntent: () => {},
+    /* the summary tools reconcile against the bursts; this session has none */
+    getBursts: () => [],
+    getSummaries: () => summaries,
+    recordSummary: (by: string, byName: string, headline: string, chapters: Chapter[]) => {
+      const entry: SessionSummary = {
+        id: `s${summaries.length}`,
+        by,
+        byName,
+        at: 0,
+        from: 0,
+        to: 0,
+        headline,
+        chapters,
+      };
+      summaries = [...summaries.filter((x) => x.by !== by), entry];
+      return { summary: entry, audit: auditSummary(entry, []) };
+    },
   };
-  return { session: session as unknown as ProjectSession, board: () => current, claimed };
+  return { session: session as unknown as ProjectSession, board: () => current, claimed, agents };
 }
 
 let dir = '';
@@ -71,7 +100,9 @@ let server: McpServer | null = null;
 let port = 0;
 
 /** Start a server whose session holds `board`, and answer on its private port. */
-async function serve(board: Board): Promise<{ board: () => Board }> {
+async function serve(
+  board: Board,
+): Promise<{ board: () => Board; agents: AgentRegistry; session: ProjectSession }> {
   const state = fakeSession(board);
   // publicPort 0: an ephemeral gateway port, so a Flare running on this
   // machine keeps 7345 and this test never talks to it by accident
@@ -318,6 +349,147 @@ describe('identifying the caller', () => {
   });
 
   it('does not fall over on a malformed body', () => {
-    expect(identify({ headers: {} }, 'not json')).toEqual({ caller: { id: null }, minted: null });
+    expect(identify({ headers: {} }, 'not json')).toEqual({
+      caller: { id: null, client: null },
+      minted: null,
+    });
+  });
+
+  /*
+   * The name a client gives itself is the only first-person answer to "which
+   * tool is this" — the process tree knows what is *running* in a terminal,
+   * not which of those things opened this socket. It is what turns an opaque
+   * session id into "Claude 2".
+   */
+  it('reads the tool out of the name the client gives itself', () => {
+    const hello = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { clientInfo: { name: 'claude-code', version: '1.0' } },
+    });
+    expect(identify({ headers: {} }, hello).caller.client).toBe('claude-code');
+  });
+});
+
+describe('the room', () => {
+  it('names the agents, and tells each what it is called', async () => {
+    await serve(emptyBoard());
+    // two sessions, both claiming to be claude — the case a process list cannot
+    // tell apart at all
+    const hello = async (): Promise<string> => {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { clientInfo: { name: 'claude-code' } },
+        }),
+      });
+      await res.json();
+      return res.headers.get('mcp-session-id') ?? '';
+    };
+    const asAgent = async (session: string, name: string, args: Record<string, unknown> = {}) => {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'mcp-session-id': session },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }),
+      });
+      const out = (await res.json()) as any;
+      return (out?.result?.content?.[0]?.text ?? '') as string;
+    };
+
+    const one = await hello();
+    const two = await hello();
+    expect(one).not.toBe(two);
+
+    expect(await asAgent(one, 'chat_post', { text: 'moving the port lookup', kind: 'taking', paths: ['shared/graph.ts'] })).toContain(
+      'posted as Claude 1',
+    );
+
+    // the second agent going for the same file is told who is already in it,
+    // and is not stopped — there is no lock here
+    const reply = await asAgent(two, 'chat_post', {
+      text: 'need the edge builder',
+      kind: 'taking',
+      paths: ['shared'],
+    });
+    expect(reply).toContain('posted as Claude 2');
+    expect(reply).toContain('HEADS UP');
+    expect(reply).toContain('Claude 1');
+
+    // and reading catches you up on what you missed, once
+    expect(await asAgent(one, 'chat_read')).toContain('need the edge builder');
+    expect(await asAgent(one, 'chat_read')).toContain('nothing new');
+
+    const roster = await asAgent(one, 'agents_list');
+    expect(roster).toContain('Claude 1');
+    expect(roster).toContain('Claude 2');
+    expect(roster).toContain('(you)');
+  });
+
+  it('will not let an agent take files without saying which', async () => {
+    await serve(emptyBoard());
+    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-session-id': 'solo' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'chat_post', arguments: { text: 'starting', kind: 'taking' } },
+      }),
+    });
+    const out = (await res.json()) as any;
+    expect(out.result.content[0].text).toContain('has to name the paths');
+  });
+});
+
+describe('what an agent says it did', () => {
+  /*
+   * The endpoint exists because the review can show a human every burst and
+   * every diff and still not tell them what the session was *about*. Only the
+   * agent knows that, and only while it is still running — so the tool has to
+   * be worth calling, which means its reply has to be worth reading.
+   */
+  it('records the story and hands back what Flare watched instead', async () => {
+    await serve(emptyBoard());
+    const out = await call('session_summary', {
+      headline: 'Moved the workspace lookup into the graph builder',
+      chapters: [
+        {
+          title: 'The lookup',
+          detail: 'The resolver was reading package.json itself, so two places knew the layout.',
+          paths: ['shared/graph.ts'],
+          outcome: 'done',
+        },
+      ],
+    });
+    expect(out).toContain('recorded');
+    // this fixture watched no writes, and it says so rather than agreeing
+    expect(out).toContain('did not attribute any file changes');
+  });
+
+  it('refuses a summary with nothing in it', async () => {
+    await serve(emptyBoard());
+    expect(await call('session_summary', { headline: '  ' })).toContain('needs a headline');
+  });
+
+  it('keeps only the corrected version, not the mistake under it', async () => {
+    const state = await serve(emptyBoard());
+    await call('session_summary', { headline: 'first go' });
+    await call('session_summary', { headline: 'with the bits I forgot' });
+    expect(state.session.getSummaries()).toHaveLength(1);
+    expect(state.session.getSummaries()[0].headline).toBe('with the bits I forgot');
+  });
+
+  it('asks for one before letting an agent stop', async () => {
+    await serve(setRoutine(emptyBoard(), ROUTINE));
+    expect(await call('working_agreement')).toContain('Before you stop');
+    await call('session_summary', { headline: 'done' });
+    // and stops asking once it has one
+    expect(await call('working_agreement')).not.toContain('Before you stop');
   });
 });

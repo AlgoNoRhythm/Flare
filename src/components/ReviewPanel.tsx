@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ago, num } from '../format';
-import { agentIdOf, agentLabelOf, type Conflict } from '../../shared/conflicts';
+import { agentIdOf, agentLabelOf, agentNameOf, type Conflict } from '../../shared/conflicts';
 import type { Decision, Question } from '../../shared/tasks';
 import { BurstStrip, type BurstRange } from './BurstStrip';
 import { Splitter } from './Splitter';
@@ -19,8 +19,11 @@ import {
 import type { ShadowSnapshot } from '../../shared/types';
 import { shortenCommand } from '../../shared/commands';
 import type { ReviewInfo } from '../api';
+import type { SessionSummary } from '../../shared/session';
+import { SessionStory } from './SessionStory';
+import { HintNote } from './HintNote';
 import { UI_STATUS, info } from '../theme';
-import { agentColor } from '../graph/lenses';
+import { agentColor, agentShape } from '../graph/lenses';
 
 /**
  * The review cockpit.
@@ -45,6 +48,8 @@ import { agentColor } from '../graph/lenses';
 
 interface Props {
   bursts: ChangeBurst[];
+  /** what each agent says it did this session — the story over the diff */
+  summaries: readonly SessionSummary[];
   /** the shadow history, for working out what a burst changed things *from* */
   snapshots: readonly ShadowSnapshot[];
   insights: Insights | null;
@@ -102,6 +107,7 @@ interface Row {
 
 export function ReviewPanel({
   bursts,
+  summaries,
   snapshots,
   insights,
   reviewInfo,
@@ -132,6 +138,8 @@ export function ReviewPanel({
   const newest = bursts.length > 0 ? bursts[bursts.length - 1].id : null;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(newest ? [newest] : []));
   const [onlyProblems, setOnlyProblems] = useState(false);
+  /** show only one agent's changes; null is everyone's */
+  const [agentFilter, setAgentFilter] = useState<string | null>(null);
 
   /*
    * Which of the two halves is showing.
@@ -142,13 +150,28 @@ export function ReviewPanel({
    */
   const [mapCollapsed, setMapCollapsed] = useState(false);
   const [listCollapsed, setListCollapsed] = useState(false);
-  const [mapWidth, setMapWidth] = useState(0.56);
+  /* the split survives the session: where you like the divider is a
+     preference about you, not about this change */
+  const [mapWidth, setMapWidth] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem('flare.review.split'));
+      return stored >= 0.2 && stored <= 0.85 ? stored : 0.56;
+    } catch {
+      return 0.56;
+    }
+  });
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const dragSplit = useCallback((clientX: number) => {
     const box = bodyRef.current?.getBoundingClientRect();
     if (!box || box.width === 0) return;
-    setMapWidth(Math.min(0.85, Math.max(0.2, (clientX - box.left) / box.width)));
+    const next = Math.min(0.85, Math.max(0.2, (clientX - box.left) / box.width));
+    setMapWidth(next);
+    try {
+      localStorage.setItem('flare.review.split', String(next));
+    } catch {
+      // storage unavailable: the split still applies for this window
+    }
   }, []);
 
   /*
@@ -252,9 +275,46 @@ export function ReviewPanel({
     return sortForReview(rows);
   };
 
-  const visible = onlyProblems
-    ? ordered.filter((b) => b.verification !== 'passed' || b.smells.length > 0)
-    : ordered;
+  /**
+   * The session broken down by who did it.
+   *
+   * With one agent this is a single chip and reads as a total. With three it
+   * is the answer to the question a chronological list of bursts cannot
+   * answer at all: *which of them wrote what, and whose work is the unchecked
+   * part.* One agent leaving every one of its changes unverified is a fact
+   * about that agent, and it is invisible when its bursts are interleaved with
+   * two others' down a scrolling list.
+   */
+  const byAgent = useMemo(() => {
+    const out = new Map<
+      string,
+      { id: string; name: string; bursts: number; files: number; unverified: number; smells: number }
+    >();
+    for (const burst of bursts) {
+      const id = agentIdOf(burst);
+      const entry = out.get(id) ?? {
+        id,
+        name: agentNameOf(burst),
+        bursts: 0,
+        files: 0,
+        unverified: 0,
+        smells: 0,
+      };
+      entry.bursts++;
+      entry.files += burst.changed.length + burst.removed.length;
+      entry.smells += burst.smells.length;
+      if (burst.verification !== 'passed') entry.unverified++;
+      // the newest burst's name wins: an agent that identified itself late
+      // should not be listed under the tool name it arrived with
+      entry.name = agentNameOf(burst);
+      out.set(id, entry);
+    }
+    return [...out.values()].sort((a, b) => b.files - a.files);
+  }, [bursts]);
+
+  const visible = ordered
+    .filter((b) => !onlyProblems || b.verification !== 'passed' || b.smells.length > 0)
+    .filter((b) => agentFilter === null || agentIdOf(b) === agentFilter);
 
   const unverified = bursts.filter(
     (b) => b.verification === 'not-run' || b.verification === 'stale' || b.verification === 'failed',
@@ -264,6 +324,19 @@ export function ReviewPanel({
   if (bursts.length === 0) {
     return (
       <div className="review-panel" data-testid="review-panel">
+        {/*
+          A story with no bursts under it is still worth showing.
+          An agent that summarised work Flare could not attribute to it — or
+          summarised before the watcher caught up — has still said the one
+          thing nothing else here can say, and hiding it behind "nothing has
+          changed yet" would throw it away.
+        */}
+        <SessionStory
+          summaries={summaries}
+          bursts={bursts}
+          onSelectFile={onSelectFile}
+          onOpenFile={onOpenFile}
+        />
         <div className="issues-empty" style={{ paddingTop: 60 }}>
           <div className="issues-empty-mark">○</div>
           Nothing has changed yet this session.
@@ -280,11 +353,11 @@ export function ReviewPanel({
 
   return (
     <div className="review-panel" data-testid="review-panel" ref={rootRef}>
-      <div className="review-note">
+      <HintNote id="review" className="review-note">
         Everything below is <b>already written to disk</b> — an agent does not wait for approval. Reviewing
         means deciding what to keep: <b>dismiss</b> clears the marker and changes nothing, <b>revert</b> puts
         the files back.
-      </div>
+      </HintNote>
       {/*
         The strip takes the leading position and the counts move right of the
         spacer, giving up their labels for tooltips: the three stat blocks were
@@ -339,6 +412,33 @@ export function ReviewPanel({
           />
           needs attention only
         </label>
+        {/*
+          Who did what, when "who" is more than one.
+          A single author needs no breakdown — the counts to the left already
+          are its breakdown — so this appears exactly when the session stopped
+          having one author and the question became worth asking.
+        */}
+        {byAgent.length > 1 && (
+          <div className="review-agents" data-testid="review-agents">
+            {byAgent.map((a) => (
+              <button
+                key={a.id}
+                className={`review-agent${agentFilter === a.id ? ' on' : ''}`}
+                style={{ '--agent': agentColor(a.id) } as React.CSSProperties}
+                title={`${a.name} — ${a.bursts} change${a.bursts === 1 ? '' : 's'}, ${a.files} file${
+                  a.files === 1 ? '' : 's'
+                }, ${a.unverified} unverified${a.smells > 0 ? `, ${a.smells} smell${a.smells === 1 ? '' : 's'}` : ''}.\nClick to show only its changes.`}
+                onClick={() => setAgentFilter((prev) => (prev === a.id ? null : a.id))}
+                data-testid={`review-agent-${a.id}`}
+              >
+                <span className="review-agent-mark">{agentShape(a.id)}</span>
+                {a.name}
+                <span className="review-agent-files">{a.files}</span>
+                {a.unverified > 0 && <span className="review-agent-unver">{a.unverified}✗</span>}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           className="btn"
           disabled={!lastGreen}
@@ -400,6 +500,20 @@ export function ReviewPanel({
           </button>
           {!listCollapsed && (
       <div className="review-list">
+        {/*
+          The story first, then the changes it is about.
+
+          Every row below is something Flare derived; this is the one thing it
+          had to be told. A person opening this panel after a night of agent
+          work wants the sentence before the diff — and the diff is right
+          underneath, so the sentence can be checked rather than believed.
+        */}
+        <SessionStory
+          summaries={summaries}
+          bursts={bursts}
+          onSelectFile={onSelectFile}
+          onOpenFile={onOpenFile}
+        />
         {visible.length === 0 && (
           <div className="issues-empty">
             <div className="issues-empty-mark">✓</div>
@@ -427,12 +541,20 @@ export function ReviewPanel({
                 }
               >
                 <span className="burst-caret">{open ? '▾' : '▸'}</span>
-                {/* the label, not the tool: the strip beside it says "Add OAuth",
-                    and a row underneath saying "agent" for the same change reads
-                    as two different authors */}
+                {/*
+                  Who, then what. The name is the part that has to survive a
+                  narrow panel — with three agents on one repo, "Claude 2" is
+                  what makes the row findable and "Add OAuth" is the detail
+                  that explains it, so the second one is what truncates.
+                */}
                 <span className="burst-agent" style={{ color: agentColor(agentIdOf(burst)) }}>
-                  {agentLabelOf(burst)}
+                  {agentNameOf(burst)}
                 </span>
+                {agentLabelOf(burst) !== agentNameOf(burst) && (
+                  <span className="burst-doing" title={agentLabelOf(burst)}>
+                    {agentLabelOf(burst)}
+                  </span>
+                )}
                 <span className="burst-files">
                   {files} file{files === 1 ? '' : 's'}
                 </span>

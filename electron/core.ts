@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ProjectSession } from './session';
+import type { SearchOptions } from '../shared/search';
 import { PtyService } from './services/pty';
 import { AgentMonitor } from './services/agents';
 import { syncStopHook } from './services/heartbeat';
@@ -231,6 +232,8 @@ export function createCore(options: CoreOptions): Core {
         syncHeartbeat(board);
         onEvent('evt:board', board);
       },
+      onAgents: (snapshot) => onEvent('evt:agents', snapshot),
+      onSummaries: (summaries) => onEvent('evt:summaries', summaries),
     });
     session.attributionProvider = () => agentMonitor.attributionDetail();
     const info = await session.open();
@@ -357,6 +360,12 @@ export function createCore(options: CoreOptions): Core {
   on('file:write', (rel: string, content: string) =>
     session ? session.writeFile(rel, content) : false,
   );
+  on('search:text', (query: string, options?: SearchOptions) => session?.searchText(query, options ?? {}) ?? []);
+  on(
+    'search:replace',
+    (query: string, replacement: string, options?: SearchOptions, paths?: string[]) =>
+      session?.replaceText(query, replacement, options ?? {}, paths) ?? { files: 0, replacements: 0 },
+  );
   on('file:create', (rel: string) => session?.createFile(rel) ?? false);
   on('dir:create', (rel: string) => session?.createDir(rel) ?? false);
   on('project:rescan', () => session?.refreshFromDisk() ?? Promise.resolve());
@@ -377,6 +386,26 @@ export function createCore(options: CoreOptions): Core {
   });
   on('activity:lastGreen', () => session?.lastGreenSnapshot() ?? null);
   on('activity:edits', () => session?.getBurstEdits() ?? []);
+  on('summaries:get', () => session?.getSummaries() ?? []);
+  on('agents:get', () => session?.agents.snapshot() ?? { agents: [], channel: [], at: Date.now() });
+  /**
+   * You, in the room with them.
+   *
+   * The same channel the agents coordinate in rather than a separate operator
+   * console: "leave shared/graph.ts to me for ten minutes" is exactly the kind
+   * of thing they say to each other, and an agent reading the feed has no
+   * reason to treat it differently because a person typed it.
+   */
+  on('agents:say', (input: { text: string; kind?: string; paths?: string[]; to?: string | null }) => {
+    if (!session || typeof input?.text !== 'string' || input.text.trim() === '') return false;
+    session.agents.sayAsHuman({
+      text: input.text,
+      kind: input.kind as never,
+      paths: input.paths,
+      to: input.to,
+    });
+    return true;
+  });
   on('board:get', () => session?.getBoard() ?? null);
   on('board:set', (board: Board) => {
     session?.setBoard(board);

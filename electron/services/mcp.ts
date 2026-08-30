@@ -17,6 +17,16 @@ import {
   tasksInLane,
   updateTask,
 } from '../../shared/tasks';
+import {
+  covers as coversPath,
+  formatFeed,
+  noticesFor,
+  openAsks,
+  type Notice,
+  type PostKind,
+} from '../../shared/channel';
+import { presenceOf } from '../../shared/roster';
+import { formatAudit, type Chapter, type ChapterOutcome } from '../../shared/session';
 import { stopHookReply } from './heartbeat';
 import { McpRegistry, type McpRegistryEntry } from './mcpRegistry';
 import { SlugBook } from './slugs';
@@ -94,6 +104,14 @@ interface JsonRpcMessage {
  */
 export interface McpCaller {
   id: string | null;
+  /**
+   * What the client called itself on `initialize` — 'claude-code', 'codex'.
+   *
+   * The only first-person answer to "which tool is this": the process tree
+   * knows what is *running* in a terminal, not which of those things opened
+   * this socket. It is what turns an opaque session id into "Claude 2".
+   */
+  client?: string | null;
 }
 
 interface ToolDef {
@@ -109,6 +127,49 @@ interface ToolDef {
 
 const str = (desc: string) => ({ type: 'string', description: desc });
 
+/** Fold an agent's own sentence into the middle of one of ours. */
+function lowerFirst(text: string): string {
+  const trimmed = text.trim().replace(/\.$/, '');
+  if (/^[A-Z]{2,}/.test(trimmed)) return trimmed;
+  return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
+}
+
+/**
+ * Read whatever the agent put in `kind`.
+ *
+ * Forgiving on purpose: an agent that writes "take" or "DONE" meant the thing
+ * it obviously meant, and dropping its post on the floor over a tag would cost
+ * the room the message. Anything unrecognised is `saying`, which is the tag
+ * that loses nothing — the words still reach everyone.
+ */
+function normalizeKind(raw: unknown): PostKind {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value.startsWith('tak') || value === 'claim' || value === 'working') return 'taking';
+  if (value.startsWith('don') || value === 'release' || value === 'released') return 'done';
+  if (value.startsWith('ask') || value === 'question') return 'asking';
+  return 'saying';
+}
+
+/** Read whatever the agent put in `outcome`; anything unrecognised is done. */
+function normalizeOutcome(raw: unknown): ChapterOutcome {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value.startsWith('part')) return 'partial';
+  if (value.startsWith('aband') || value === 'dropped' || value === 'gave up') return 'abandoned';
+  return 'done';
+}
+
+/** "Right now: Claude 2 has shared/graph.ts" — the line every read ends with. */
+function summariseWorking(working: ReadonlyMap<string, Notice[]>, youId: string): string {
+  const others = [...working.entries()]
+    .map(([path, notices]) => [path, notices.filter((n) => n.agentId !== youId)] as const)
+    .filter(([, notices]) => notices.length > 0);
+  if (others.length === 0) return '';
+  return [
+    'Being worked on right now:',
+    ...others.map(([path, notices]) => `  ${path} — ${[...new Set(notices.map((n) => n.agentName))].join(' AND ')}`),
+  ].join('\n');
+}
+
 /**
  * Work out who is calling, minting an identity for a client that is new.
  *
@@ -122,20 +183,24 @@ export function identify(
   req: { headers: Record<string, string | string[] | undefined> },
   body: string,
 ): { caller: McpCaller; minted: string | null } {
-  const header = req.headers['mcp-session-id'];
-  const existing = typeof header === 'string' && header.length > 0 ? header : null;
-  if (existing) return { caller: { id: existing }, minted: null };
-
   let method: string | undefined;
+  let client: string | null = null;
   try {
-    method = (JSON.parse(body) as JsonRpcMessage).method;
+    const message = JSON.parse(body) as JsonRpcMessage;
+    method = message.method;
+    const info = message.params?.clientInfo as { name?: unknown } | undefined;
+    if (typeof info?.name === 'string' && info.name !== '') client = info.name;
   } catch {
     // a malformed body is the responder's problem, not ours
   }
-  if (method !== 'initialize') return { caller: { id: null }, minted: null };
+
+  const header = req.headers['mcp-session-id'];
+  const existing = typeof header === 'string' && header.length > 0 ? header : null;
+  if (existing) return { caller: { id: existing, client }, minted: null };
+  if (method !== 'initialize') return { caller: { id: null, client }, minted: null };
 
   const minted = randomUUID();
-  return { caller: { id: minted }, minted };
+  return { caller: { id: minted, client }, minted };
 }
 
 function adjacency(edges: GraphEdge[], reverse: boolean): Map<string, string[]> {
@@ -219,12 +284,14 @@ const TOOLS: ToolDef[] = [
       properties: { path: str('project-relative path (suffix match allowed)') },
       required: ['path'],
     },
-    async handler(args, session) {
+    async handler(args, session, caller) {
       const node = resolveNode(session, String(args.path));
       if (!node) return `no file matching "${args.path}" in the code graph`;
       const graph = session.getGraphData();
       const insights = await session.getInsights();
       const m = insights.files.find((f) => f.path === node.id);
+      const mine = session.agents.get(caller.id)?.id;
+      const spoken = noticesFor(session.agents.working(), node.id);
       const imports = graph.edges.filter((e) => e.source === node.id).map((e) => e.target);
       const importers = graph.edges.filter((e) => e.target === node.id).map((e) => e.source);
       const issues = insights.issues.filter((i) => i.paths.includes(node.id));
@@ -238,6 +305,13 @@ const TOOLS: ToolDef[] = [
           ? `coverage ${m.coveragePct}%`
           : `tested by ${node.testedBy} test file(s)`,
         m?.lastAgent ? `last changed by: ${m.lastAgent}${m.unreviewed ? ' (UNREVIEWED)' : ''}` : '',
+        spoken.length > 0
+          ? spoken.every((n) => n.agentId === mine)
+            ? 'you told the channel you were taking this'
+            : `BEING WORKED ON by ${[...new Set(spoken.filter((n) => n.agentId !== mine).map((n) => n.agentName))].join(' and ')}${
+                spoken[0].text ? ` — ${lowerFirst(spoken[0].text)}` : ''
+              }. Ask them in the channel before you edit it.`
+          : '',
         node.cycleId !== null ? 'part of an import cycle' : '',
         node.orphan ? 'orphan: nothing imports it' : '',
         m && m.reuseBlockers.length > 0
@@ -429,9 +503,20 @@ const TOOLS: ToolDef[] = [
       properties: { paths: { type: 'array', items: { type: 'string' }, description: 'files you plan to change' } },
       required: ['paths'],
     },
-    async handler(args, session) {
+    async handler(args, session, caller) {
       const wanted = (args.paths as string[]).map((p) => resolveNode(session, p)?.id).filter((p): p is string => Boolean(p));
       if (wanted.length === 0) return 'none of the given paths resolve to files in the graph';
+      /*
+       * "What breaks" is only half of what stops a change from landing. The
+       * other half is another agent already being inside one of these files,
+       * and this is the tool an agent calls at exactly the moment that matters
+       * — before it starts.
+       */
+      const mine = session.agents.get(caller.id)?.id;
+      const working = session.agents.working();
+      const taken = wanted
+        .map((path) => ({ path, notices: noticesFor(working, path).filter((n) => n.agentId !== mine) }))
+        .filter((entry) => entry.notices.length > 0);
       const graph = session.getGraphData();
       const affected = [...walk(wanted, adjacency(graph.edges, true))];
       const tests = affected.filter((p) => isTestPath(p));
@@ -444,7 +529,19 @@ const TOOLS: ToolDef[] = [
         risky.length > 0
           ? `caution: ${risky.map((f) => `${f.path} is high-risk (${f.risk}/100)`).join('; ')}`
           : 'no high-risk files in this change set',
-      ].join('\n');
+        taken.length > 0
+          ? `\nANOTHER AGENT IS ALREADY IN THESE:\n${taken
+              .map(
+                ({ path, notices }) =>
+                  `  ${path} — ${notices[0].agentName}${notices[0].text ? `, ${lowerFirst(notices[0].text)}` : ''}`,
+              )
+              .join(
+                '\n',
+              )}\nAsk them first with chat_post kind="asking". Editing anyway is recorded as a crossing and shown to the human next to your name.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
     },
   },
   {
@@ -493,7 +590,7 @@ const TOOLS: ToolDef[] = [
         if (tasks.length === 0) lines.push('  (empty)');
         for (const task of tasks) {
           const files = task.paths.length > 0 ? ` [${task.paths.slice(0, 3).join(', ')}${task.paths.length > 3 ? ` +${task.paths.length - 3}` : ''}]` : '';
-          lines.push(`  ${task.id}: ${task.title}${files}`);
+          lines.push(`  ${task.id}: ${task.title}${files}${task.draft ? ' (draft — not ready to pick up)' : ''}`);
         }
         lines.push('');
       }
@@ -582,8 +679,54 @@ const TOOLS: ToolDef[] = [
     description:
       'What this project expects you to do when you finish a piece of work — and what is outstanding right now: workable tasks, tasks blocked by an unanswered question, questions waiting on the human, and design decisions waiting to be agreed. Call it when you are unsure whether to keep going, and instead of stopping.',
     inputSchema: { type: 'object', properties: {} },
-    handler(_args, session) {
-      return formatRoutineForAgent(session.getBoard());
+    handler(_args, session, caller) {
+      const you = session.agents.get(caller.id);
+      /*
+       * "What should I do next" is a different question when someone else is
+       * also answering it. The routine already refuses to hand out a card
+       * another agent has started; this adds the half the board cannot know —
+       * which files are being edited this minute, and by whom.
+       */
+      const others = session.agents.list().filter((a) => a.id !== you?.id && presenceOf(a, Date.now()) !== 'gone');
+      const working = session.agents.working();
+      const lines = [formatRoutineForAgent(session.getBoard())];
+      if (you) lines.push('', `You are ${you.name} on this project.`);
+      /*
+       * The one thing that has to happen before the session ends, said at the
+       * moment an agent is deciding whether to end it. A summary written after
+       * the fact cannot be written at all: the only participant who knows what
+       * the session was about stops existing when it stops running.
+       */
+      // the same fallback the recorder uses: an anonymous client's writes are
+      // attributed to `you`, so its summary is filed there too
+      const mine = you?.id ?? 'you';
+      if (session.getSummaries().every((s) => s.by !== mine)) {
+        lines.push(
+          '',
+          '## Before you stop',
+          'Call `session_summary` with what you did — a headline and a chapter per piece of work, in prose, naming the files each covers. The review can show a human every diff and still not tell them what the session was *about*; you are the only one who can, and only while you are still running. Flare checks it against the writes it watched and tells you what you left out.',
+        );
+      }
+      if (others.length > 0) {
+        lines.push(
+          '',
+          `## You are not alone in here (${others.length} other agent${others.length === 1 ? '' : 's'})`,
+          ...others.map((a) => {
+            const taken = [...working.entries()]
+              .filter(([, notices]) => notices.some((n) => n.agentId === a.id))
+              .map(([path]) => path);
+            return `- ${a.name} — ${a.doing ?? 'nothing announced'}${taken.length > 0 ? `; taking ${taken.join(', ')}` : ''}`;
+          }),
+          '',
+          'There are no locks. The channel is how you stay out of each other\'s way, and it only works if you use it:',
+          '- chat_post kind="taking" with the paths, BEFORE your first edit',
+          '- chat_read when you finish a piece of work and before you pick up the next',
+          '- chat_post kind="asking" with `to` set to an agent\'s name to ask whether a file is free',
+          '- chat_post kind="done" with the paths the moment you stop needing them',
+          'A file someone else has spoken for is a file whose changes will be folded into yours by whoever writes second.',
+        );
+      }
+      return lines.join('\n');
     },
   },
   {
@@ -699,6 +842,145 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'chat_post',
+    description:
+      'Say something to the other agents working on this project. This is how you coordinate: there are no locks and nothing is refused, so the room is the only thing stopping two of you rewriting the same file.\n\nWrite it the way you would to a colleague — a sentence or two saying what you are doing and why it matters to them ("moving the workspace lookup out of the resolver, so anything importing it will need the new signature"). A human reads this room as well, in Flare\'s Channel tab, and reads it to follow the work rather than to audit it: prose, not status codes, and no restating the paths you already passed in `paths`.\n\nPost with kind="taking" and the paths you are about to work on BEFORE your first edit — files or whole folders. Post kind="done" with those paths the moment you stop needing them, so whoever is waiting can move. Use kind="asking" with `to` to put a question to a specific agent by name ("is shared/graph.ts free?") — it is addressed to them and shows as waiting until they post again. Anything else is kind="saying".\n\nIf someone has already said they are taking a path you name, you are told so in the reply rather than stopped: talk to them. Posting also hands you everything said since you last looked, so this is usually the only call you need.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: str('What you are doing, in a sentence or two of plain prose — for another agent to act on and a human to read.'),
+        kind: str('taking | done | asking | saying. Defaults to saying.'),
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'The files or folders this is about — required for taking and done.',
+        },
+        to: str('The agent you are addressing, by the name Flare gave it ("Claude 2"). Omit for the room.'),
+      },
+      required: ['text'],
+    },
+    handler(args, session, caller) {
+      if (!caller.id) {
+        return "this MCP client did not keep a session id, so Flare cannot tell you from another agent — nothing was posted";
+      }
+      const text = String(args.text ?? '').trim();
+      if (text === '') return 'say something';
+      const kind = normalizeKind(args.kind);
+      const paths = (Array.isArray(args.paths) ? args.paths.map(String) : [])
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if ((kind === 'taking' || kind === 'done') && paths.length === 0) {
+        return `a "${kind}" post has to name the paths it is about — that is the part the other agents and the graph read`;
+      }
+
+      /* who else had spoken for these paths *before* this post landed */
+      const before = session.agents.working();
+      const clash = paths.flatMap((path) =>
+        [...before.entries()]
+          .filter(([held]) => coversPath(held, path) || coversPath(path, held))
+          .flatMap(([, notices]) => notices)
+          .filter((n) => n.agentId !== `mcp:${caller.id}`)
+          .map((n) => ({ path, notice: n })),
+      );
+
+      const { message, unread, agent } = session.agents.say(caller.id, { text, kind, paths, to: args.to ? String(args.to) : null });
+      /*
+       * A "taking" is also an intent: it is the sentence `record_intent` asks
+       * for, with the files attached. Recording it here is what lets a
+       * well-behaved agent get away with one call, and what puts its name on
+       * the burst in the review.
+       */
+      if (kind === 'taking') session.setIntent(text, undefined, 'agent', caller.id);
+
+      return [
+        `posted as ${agent.name}${message.toName ? ` → ${message.toName}` : ''}.`,
+        kind === 'taking' && clash.length === 0
+          ? 'Nobody else has spoken for those paths. Your writes to them will be attributed to you by name in the review.'
+          : '',
+        clash.length > 0
+          ? [
+              '',
+              'HEADS UP — someone else has already said they are working on:',
+              ...clash.map(
+                ({ path, notice }) =>
+                  `  ${path} — ${notice.agentName}${notice.text ? `, "${notice.text}"` : ''}`,
+              ),
+              'Nothing is blocked, so this is yours to sort out: ask them with chat_post kind="asking" and `to` set to their name, or take other work. Editing it anyway is recorded as a crossing and shown to the human next to your name.',
+            ].join('\n')
+          : '',
+        unread.length > 0
+          ? `\nSaid since you last looked (${unread.length}):\n${formatFeed(unread)}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+    },
+  },
+  {
+    name: 'chat_read',
+    description:
+      'Read the room. Call it when you finish a piece of work and before you pick up the next one — that is the moment another agent\'s "taking src/parser" or a question addressed to you changes what you should do next. By default you get what has been said since you last looked; pass all=true for the whole conversation.',
+    inputSchema: {
+      type: 'object',
+      properties: { all: { type: 'boolean', description: 'true for the whole conversation.' } },
+    },
+    handler(args, session, caller) {
+      if (!caller.id) return 'this MCP client did not keep a session id, so it has no place in the room';
+      const { messages, unread, agent } = session.agents.read(caller.id, args.all === true);
+      const working = session.agents.working();
+      const asks = openAsks(session.agents.messages(), Date.now()).filter((m) => m.to === agent.id);
+
+      if (messages.length === 0) {
+        return [
+          'nothing new.',
+          summariseWorking(working, agent.id),
+          'Say what you are about to work on with chat_post kind="taking" before you start.',
+        ]
+          .filter(Boolean)
+          .join('\n\n');
+      }
+      return [
+        args.all === true ? `the room (${messages.length}):` : `since you last looked (${unread}):`,
+        formatFeed(messages),
+        asks.length > 0
+          ? `\nWAITING ON YOU:\n${formatFeed(asks)}\nAnswer with chat_post — kind="saying", to="${asks[0].fromName}".`
+          : '',
+        summariseWorking(working, agent.id),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    },
+  },
+  {
+    name: 'agents_list',
+    description:
+      'Every agent working on this project right now, what each is doing and what it has said it is taking. Use it to know who you are sharing the repo with, to get the exact name to address one by — and to find out what Flare calls you, so the notes you leave on the board match the name the human sees.',
+    inputSchema: { type: 'object', properties: {} },
+    handler(_args, session, caller) {
+      const now = Date.now();
+      const roster = session.agents.list();
+      const you = session.agents.get(caller.id);
+      if (roster.length === 0) return 'no agents have connected to this project yet';
+      const working = session.agents.working();
+      return roster
+        .map((agent) => {
+          const taken = [...working.entries()]
+            .filter(([, notices]) => notices.some((n) => n.agentId === agent.id))
+            .map(([path]) => path);
+          return [
+            `${agent.name}${agent.id === you?.id ? '  (you)' : ''} — ${presenceOf(agent, now)}`,
+            agent.doing ? `  doing: ${agent.doing}` : '',
+            agent.task ? `  card: ${agent.task}` : '',
+            taken.length > 0 ? `  taking: ${taken.join(', ')}` : '  taking: nothing announced',
+            agent.files > 0 ? `  written this session: ${agent.files} file(s)` : '',
+          ]
+            .filter(Boolean)
+            .join('\n');
+        })
+        .join('\n\n');
+    },
+  },
+  {
     name: 'record_intent',
     description:
       'Record what you are about to change and why, before you change it. The IDE attaches this to the change burst so the human reviewing your diff can see the reasoning instead of reconstructing it. Call this at the start of any multi-file edit.',
@@ -716,6 +998,73 @@ const TOOLS: ToolDef[] = [
       const ruledOut = args.ruled_out ? String(args.ruled_out).trim() : undefined;
       session.setIntent(goal, ruledOut, 'agent', caller.id);
       return 'intent recorded; it will be shown next to your changes in the review panel';
+    },
+  },
+  {
+    name: 'session_summary',
+    description:
+      'Write down what you did this session, as you finish and BEFORE you stop. This is the thing a human arrives to: the review can show them every burst, every diff and what checked it, and none of that answers "what happened while I was away" — only you know that, and only while you are still running.\n\nGive a `headline` and a list of `chapters`, one per piece of work: a title a person would recognise, a sentence or two of prose saying why and what it commits the codebase to, and the `paths` it covers. Prose, not a changelog — the diff is already there; what is missing is the reasoning that produced it.\n\nFlare watched the writes, so the reply tells you where your summary and the session disagree: chapters naming files that never changed, files that changed and no chapter accounts for, and chapters covering work nothing has verified. Fix it and call this again — it replaces your previous summary rather than stacking on it, so the version a human reads is your corrected one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        headline: str('The session in one line, as you would open a handover with.'),
+        chapters: {
+          type: 'array',
+          description: 'One per piece of work, in the order you did them.',
+          items: {
+            type: 'object',
+            properties: {
+              title: str('What this piece of work was, in one line.'),
+              detail: str('Why, and what it commits the codebase to. A sentence or two of prose.'),
+              paths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'The files or folders this chapter covers.',
+              },
+              outcome: str('done | partial | abandoned. Defaults to done.'),
+            },
+            required: ['title'],
+          },
+        },
+      },
+      required: ['headline'],
+    },
+    handler(args, session, caller) {
+      const headline = String(args.headline ?? '').trim();
+      if (headline === '') return 'a summary needs a headline — the session in one line';
+      const raw = Array.isArray(args.chapters) ? args.chapters : [];
+      const chapters: Chapter[] = raw
+        .map((entry) => (entry ?? {}) as Record<string, unknown>)
+        .map((entry) => ({
+          title: String(entry.title ?? '').trim(),
+          detail: String(entry.detail ?? '').trim(),
+          paths: (Array.isArray(entry.paths) ? entry.paths.map(String) : [])
+            .map((p) => p.trim())
+            .filter(Boolean),
+          outcome: normalizeOutcome(entry.outcome),
+        }))
+        .filter((chapter) => chapter.title !== '');
+
+      const me = session.agents.get(caller.id);
+      /*
+       * Attributed the same way its writes were.
+       *
+       * An anonymous client's bursts come back as the tool name or as `you`,
+       * so a summary filed under an `mcp:` id it never wrote under would audit
+       * against an empty set and report that it changed nothing.
+       */
+      const by = me?.id ?? 'you';
+      const { audit } = session.recordSummary(by, me?.name ?? 'An agent', headline, chapters);
+
+      return [
+        `recorded. It is at the top of the Review panel now, under ${me?.name ?? 'your name'}.`,
+        '',
+        formatAudit(audit),
+        '',
+        audit.unaccounted.length > 0 || audit.chapters.some((c) => c.absent.length > 0)
+          ? 'Call session_summary again with the corrections — the new one replaces this.'
+          : 'Nothing unaccounted for.',
+      ].join('\n');
     },
   },
   {
@@ -1131,6 +1480,13 @@ export class McpServer {
   ): Promise<Record<string, unknown>> {
     switch (message.method) {
       case 'initialize':
+        /*
+         * The one message that means "a new agent is here" is also the only
+         * one that carries the client's name, so it is where an identity is
+         * made: session id plus tool becomes "Claude 2", and everything this
+         * agent writes for the rest of the session is filed under that.
+         */
+        this.getSession()?.agents.noteAgent(caller.id, caller.client ?? null);
         return {
           result: {
             protocolVersion: (message.params?.protocolVersion as string) ?? '2025-06-18',
@@ -1166,6 +1522,16 @@ export class McpServer {
         if (!session) {
           return { result: { content: [{ type: 'text', text: 'no project is open in Flare' }], isError: true } };
         }
+        /*
+         * Presence is measured in tool calls, not in sockets.
+         *
+         * A streamable-HTTP client holds no connection between requests, so
+         * there is nothing to watch go away — the only evidence an agent is
+         * still working is that it keeps asking. That also means a client that
+         * skipped `initialize` is registered here, on its first call, rather
+         * than editing files as nobody.
+         */
+        session.agents.noteCall(caller.id);
         try {
           const text = await tool.handler(args, session, caller);
           return { result: { content: [{ type: 'text', text }] } };

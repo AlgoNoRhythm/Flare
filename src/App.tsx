@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   CommandLogEntry,
@@ -27,9 +27,9 @@ import { EditorPane } from './components/EditorPane';
 import { DocumentPane } from './components/DocumentPane';
 import { previewKindFor } from '../shared/preview';
 import { plural, when } from './format';
-import { clampTerminal } from './layout';
+import { clampTerminal, openingTerminalHeight } from './layout';
 
-import { FileTree, type FileTreeHandle } from './components/FileTree';
+import { FileTree, STATE_COLOR, type FileTreeHandle } from './components/FileTree';
 import {
   CanvasView,
   type CanvasProps,
@@ -39,12 +39,13 @@ import {
 import { WheelView } from './components/WheelView';
 import { DistrictsView } from './components/DistrictsView';
 import { LensLegend } from './components/LensLegend';
+import { IconBoard, IconChannel, IconGraph, IconHistory, IconInsights, IconRelayout, IconReview } from './components/icons';
 import { HelpOverlay } from './components/HelpOverlay';
 import { MenuBar, tidySeparators, type MenuDef } from './components/MenuBar';
 import { Splitter } from './components/Splitter';
 import { TerminalPanel } from './components/TerminalPanel';
 import { Timeline } from './components/Timeline';
-import { CommandPalette, type PaletteItem } from './components/CommandPalette';
+import { CommandPalette, fuzzyScore, type PaletteItem, type PaletteMode } from './components/CommandPalette';
 import { InsightsPanel } from './components/InsightsPanel';
 import { ReviewPanel } from './components/ReviewPanel';
 import { BoardPanel } from './components/BoardPanel';
@@ -64,6 +65,11 @@ import { Toasts, toast } from './components/Toasts';
 import { RiskAlerts } from './components/RiskAlerts';
 import { riskAlerts, type RiskAlert } from '../shared/riskAlerts';
 import { conflicts, dependentsMap, type BurstEdit, type Conflict } from '../shared/conflicts';
+import { contested, noticesByFile, workingOn } from '../shared/channel';
+import { presenceOf } from '../shared/roster';
+import { ChannelPanel } from './components/ChannelPanel';
+import type { AgentsSnapshot } from './api';
+import type { SessionSummary } from '../shared/session';
 import type { BurstRange } from './components/BurstStrip';
 import { briefing, shouldBrief, type BriefingRow } from '../shared/briefing';
 import { Briefing } from './components/Briefing';
@@ -83,6 +89,41 @@ import { formatPathsFlat, formatPathsTree } from '../shared/pathFormat';
 import { withBlastRadius } from '../shared/graph';
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
+
+/** The three ways the same graph is drawn — the View menu and its chip. */
+const CANVAS_VIEWS: { id: GraphViewKind; glyph: string; label: string; hint: string }[] = [
+  {
+    id: 'canvas',
+    glyph: '▤',
+    label: 'Canvas',
+    hint: 'Dependency cards on a board, ordered left-to-right: foundations left, entry points right. Best for reading structure and dragging things around.',
+  },
+  {
+    id: 'wheel',
+    glyph: '◎',
+    label: 'Wheel',
+    hint: 'Every file on one ring, grouped by folder, dependencies drawn as chords through the middle. Best for "what talks to what" across the whole repo.',
+  },
+  {
+    id: 'districts',
+    glyph: '▩',
+    label: 'Districts',
+    hint: 'Treemap where tile area is lines of code. Best for "how big is this repo and where does the mass sit".',
+  },
+];
+
+/**
+ * A deep path, middle-truncated: root and the last two segments survive,
+ * because "which drive" and "which project" are the parts anyone reads. CSS
+ * ellipsis was tried first — direction:rtl reorders a backslashed path's
+ * segments under the bidi algorithm instead of trimming its start.
+ */
+function shortPath(full: string): string {
+  const parts = full.split(/[\\/]/).filter(Boolean);
+  if (parts.length <= 4 || full.length <= 46) return full;
+  const sep = full.includes('\\') ? '\\' : '/';
+  return `${parts[0]}${sep}…${sep}${parts.slice(-2).join(sep)}`;
+}
 
 /**
  * Leave room for macOS's traffic lights, which sit *inside* the window.
@@ -164,6 +205,24 @@ export function App() {
   const [changedAt, setChangedAt] = useState<Record<string, number>>({});
   const [changedBy, setChangedBy] = useState<Record<string, string>>({});
   const [agentStatus, setAgentStatus] = useState<Record<string, string | null>>({});
+  /**
+   * Who is connected over MCP, and what they are saying to each other.
+   *
+   * The terminal-level `agentStatus` above answers "is something running in
+   * that pane"; this answers "who is in this repo and where" — a different
+   * question, with a different identity behind it (the MCP session rather than
+   * the process tree) and the only one that can tell two claudes apart.
+   */
+  const [mcpAgents, setMcpAgents] = useState<AgentsSnapshot>({ agents: [], channel: [], at: 0 });
+  /**
+   * What each agent says it did this session.
+   *
+   * The one thing in the review that Flare did not derive: every other panel
+   * is computed from what it watched, and this is the story only the agent
+   * that lived it can tell. It is checked against the writes rather than
+   * believed — see shared/session.ts.
+   */
+  const [summaries, setSummaries] = useState<SessionSummary[]>([]);
   const [commands, setCommands] = useState<CommandLogEntry[]>([]);
   const [recentChanges, setRecentChanges] = useState<{ path: string; time: number; agent: string }[]>([]);
   const [churn, setChurn] = useState<Record<string, number>>({});
@@ -178,7 +237,6 @@ export function App() {
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; entries: { path: string; isDir: boolean }[] } | null>(null);
   const [modal, setModal] = useState<ModalRequest | null>(null);
-  const [focusId, setFocusId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [lens, setLens] = useState<Lens>('clusters');
   /*
@@ -192,6 +250,27 @@ export function App() {
   const [theme, setTheme] = useState<ThemeName>(() => currentTheme());
   /** what was chosen, which may be "whatever the machine says" */
   const [themeChoice, setThemeChoice] = useState<ThemeChoice>(() => storedChoice());
+  /*
+   * Density: how much chrome per pixel. The default is the design as tuned;
+   * compact takes the whole frame down a step for people who want the map to
+   * win every trade against the chrome. One attribute, so the stylesheet
+   * carries the differences the same way it carries the themes.
+   */
+  const [density, setDensity] = useState<'comfortable' | 'compact'>(() => {
+    try {
+      return localStorage.getItem('flare.density') === 'compact' ? 'compact' : 'comfortable';
+    } catch {
+      return 'comfortable';
+    }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.density = density;
+    try {
+      localStorage.setItem('flare.density', density);
+    } catch {
+      // storage unavailable: applies for this window, forgotten next time
+    }
+  }, [density]);
   useEffect(() => onThemeChange(setTheme), []);
   const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(new Set());
@@ -242,7 +321,16 @@ export function App() {
   const [graphVersion, setGraphVersion] = useState(0);
   const [stats, setStats] = useState<GraphStats>({ nodes: 0, edges: 0, clusters: [] });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** jump to a file, or find text in files — the palette's two jobs */
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>('jump');
+  /** a query handed to the text search by the top bar */
+  const [paletteSeed, setPaletteSeed] = useState<string | undefined>(undefined);
+  const [searchFocused, setSearchFocused] = useState(false);
+  /** the top bar's hints step aside after Enter or Escape until the next keystroke */
+  const [searchHintsHidden, setSearchHintsHidden] = useState(false);
   const [graphView, setGraphView] = useState<GraphViewKind>('canvas');
+  /** which of the canvas's top-right menus is unfolded */
+  const [canvasMenu, setCanvasMenu] = useState<'lens' | 'view' | null>(null);
   const [zoomPct, setZoomPct] = useState(100);
   const [helpOpen, setHelpOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -278,12 +366,9 @@ export function App() {
    */
   const [routineNonce, setRoutineNonce] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(216);
-  const [detailsWidth, setDetailsWidth] = useState(320);
   // The terminal takes a share of the window rather than a fixed 280px, so a
   // taller screen gives the graph the extra room instead of the shell.
-  const [terminalHeight, setTerminalHeight] = useState(() =>
-    Math.max(150, Math.min(300, Math.round(window.innerHeight * 0.2))),
-  );
+  const [terminalHeight, setTerminalHeight] = useState(() => openingTerminalHeight(undefined, window.innerHeight));
 
   const graphRef = useRef<GraphViewHandle | null>(null);
   const treeRef = useRef<FileTreeHandle | null>(null);
@@ -297,7 +382,6 @@ export function App() {
     setFileTree(info.fileTree);
     setGitStatus(info.git);
     setSelected(null);
-    setFocusId(null);
     setTabs([]);
     setActiveTab('graph');
     setDirtyTabs(new Set());
@@ -357,6 +441,8 @@ export function App() {
     setSelectedBurstId(null);
     setBurstRange(null);
     void api.boardGet().then((b) => b && setBoard(b));
+    void api.agentsGet().then(setMcpAgents);
+    void api.summariesGet().then(setSummaries);
     void api.activityLastGreen().then(setLastGreen);
     void api.coverageGet().then(setCoverage);
     void api.recentsGet().then(setRecents);
@@ -394,8 +480,7 @@ export function App() {
        * graph-first IDE showed you was a shell. The graph keeps a floor
        * whatever the stored number says.
        */
-      if (ui.terminalHeight) setTerminalHeight(clampTerminal(ui.terminalHeight, window.innerHeight));
-      if (ui.detailsWidth) setDetailsWidth(ui.detailsWidth);
+      if (ui.terminalHeight) setTerminalHeight(openingTerminalHeight(ui.terminalHeight, window.innerHeight));
       /*
        * Restore the tabs you had open, but always land on the graph.
        *
@@ -463,6 +548,8 @@ export function App() {
       api.on('evt:agentStatus', (payload) =>
         setAgentStatus((payload as { terminals: Record<string, string | null> }).terminals),
       ),
+      api.on('evt:agents', (payload) => setMcpAgents(payload as AgentsSnapshot)),
+      api.on('evt:summaries', (payload) => setSummaries(payload as SessionSummary[])),
       api.on('evt:agentCommand', (payload) =>
         setCommands((prev) => [...prev.slice(-499), payload as CommandLogEntry]),
       ),
@@ -492,6 +579,37 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetForProject]);
 
+  /**
+   * Where the top-right corner actually starts.
+   *
+   * The alerts and toasts float there, and "there" is not the top of the
+   * window: under the title bar is the tab row, and on the graph tab under
+   * *that* is the lens toolbar, which reaches the right edge and wraps to two
+   * rows on a narrow window. Every one of those is something a floating card
+   * would cover and whose clicks it would swallow — the same failure the
+   * bottom corner had over the terminal, one edge over.
+   *
+   * So it is measured rather than guessed, exactly as `--terminal-h` is: the
+   * bottom of the lowest chrome above the content. A number would have to be
+   * wrong on macOS, wrong on a narrow window, and wrong on every tab but one.
+   */
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+  const graphBarRef = useRef<HTMLDivElement | null>(null);
+  const [overlayTop, setOverlayTop] = useState(72);
+  useLayoutEffect(() => {
+    const measure = (): void => {
+      const bar = graphBarRef.current?.getBoundingClientRect();
+      // the toolbar exists but is hidden until the collapse state has loaded
+      const bottom = bar && bar.height > 0 ? bar.bottom : tabsRef.current?.getBoundingClientRect().bottom;
+      if (bottom) setOverlayTop(Math.round(bottom));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (tabsRef.current) ro.observe(tabsRef.current);
+    if (graphBarRef.current) ro.observe(graphBarRef.current);
+    return () => ro.disconnect();
+  }, [project, activeTab, graphView, lens, viewReady, sidebarVisible, coverage]);
+
   const expandedFilesRef = useRef(expandedFiles);
   expandedFilesRef.current = expandedFiles;
 
@@ -509,7 +627,6 @@ export function App() {
         graphView,
         sidebarWidth,
         terminalHeight,
-        detailsWidth,
         selectMode,
         legendCollapsed,
         // stamped on every save so the mark stays fresh while you are here;
@@ -518,7 +635,7 @@ export function App() {
       });
     }, 800);
     return () => clearTimeout(timer);
-  }, [project, tabs, lens, graphView, sidebarWidth, terminalHeight, detailsWidth, selectMode, legendCollapsed, presenceTick]);
+  }, [project, tabs, lens, graphView, sidebarWidth, terminalHeight, selectMode, legendCollapsed, presenceTick]);
 
   /*
    * Presence, not uptime.
@@ -630,8 +747,53 @@ export function App() {
         }),
       ),
       decisions: board.decisions,
+      // the whole transcript, not just what is standing now: a burst from an
+      // hour ago is read against what had been said when it landed
+      channel: mcpAgents.channel,
     });
-  }, [bursts, insights, burstEdits, board.decisions, graphVersion]);
+  }, [bursts, insights, burstEdits, board.decisions, mcpAgents.channel, graphVersion]);
+
+  /**
+   * Which files an agent has said it is working on, for the mark on the graph.
+   *
+   * Expanded from what was said onto the files that exist here rather than in
+   * each view: "taking src/parser" is one line in the feed and forty marks on
+   * the canvas, and the three views must not each work that out differently.
+   * The folder cards resolve themselves — see `claimUnder` in the views.
+   */
+  const spokenFor = useMemo(
+    () => noticesByFile(mcpAgents.channel, fullNodesRef.current.keys(), Date.now()),
+    [mcpAgents, graphVersion],
+  );
+
+  /** The two numbers the Channel tab wears on its badge. */
+  const liveAgentCount = useMemo(
+    () => mcpAgents.agents.filter((a) => presenceOf(a, Date.now()) !== 'gone').length,
+    [mcpAgents],
+  );
+  const channelContested = useMemo(
+    () => contested(workingOn(mcpAgents.channel, Date.now())).size,
+    [mcpAgents],
+  );
+
+  /**
+   * Light up what an agent named, on the graph.
+   *
+   * Agents talk in files *and folders* — "taking src/parser" — while the graph
+   * selects files, so a folder has to be expanded into what is under it before
+   * anything lights up.
+   */
+  const selectPaths = useCallback((paths: string[]) => {
+    const wanted = new Set(
+      [...fullNodesRef.current.keys()].filter((n) =>
+        paths.some((p) => n === p || n.startsWith(`${p}/`)),
+      ),
+    );
+    if (wanted.size === 0) return;
+    setSelectedPaths(wanted);
+    setSelected([...wanted][0] ?? null);
+    setActiveTab('graph');
+  }, []);
 
   /**
    * What happened while you were away.
@@ -1034,6 +1196,21 @@ export function App() {
       if (sg) {
         setExpandedFiles((prev) => new Set([...prev, path]));
         setActiveTab('graph');
+        // a file inside a folded folder has no card to unfold beside — the
+        // folder opens first, or the expansion happens where nobody can see it
+        const top = path.includes('/') ? path.slice(0, path.indexOf('/')) : '';
+        if (top !== '') {
+          setCollapsedDirs((prev) => {
+            if (!prev.has(top)) return prev;
+            const next = new Set(prev);
+            next.delete(top);
+            void api.collapsedSave([...next]);
+            return next;
+          });
+        }
+        // the symbols unfold beside the card, so the card comes to the middle
+        // of the view first — an expansion at the edge of the pane is half off it
+        setTimeout(() => graphRef.current?.focusNode(path), 350);
       }
     },
     [fetchSymbolGraph],
@@ -1207,6 +1384,26 @@ export function App() {
   }, []);
 
   /** File the current selection as a task without leaving the graph. */
+  /** the top bar's file suggestions — the same fuzzy match the palette uses */
+  const searchHints = useMemo(() => {
+    const q = searchQuery.trim();
+    if (q === '') return [];
+    return [...fullNodesRef.current.keys()]
+      .map((id) => ({ id, score: fuzzyScore(q, id) }))
+      .filter((r) => r.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 6)
+      .map((r) => r.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, graphVersion]);
+
+  const openTextSearch = useCallback((query: string) => {
+    setPaletteSeed(query.trim() === '' ? undefined : query.trim());
+    setPaletteMode('search');
+    setPaletteOpen(true);
+    setSearchHintsHidden(true);
+  }, []);
+
   const taskFromSelection = useCallback(
     (paths: string[]) => {
       const title = paths.length === 1 ? `Work on ${paths[0].split('/').pop()}` : `Work on ${paths.length} files`;
@@ -1368,7 +1565,6 @@ export function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setFocusId(null);
         setExpandedFiles((prev) => (prev.size > 0 ? new Set() : prev));
         // a selection with an action bar over the graph needs a way out that
         // is not "click precisely on empty board" — and that includes the
@@ -1403,8 +1599,16 @@ export function App() {
       ) {
         setSelectMode((on) => !on);
       }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setPaletteSeed(undefined);
+        setPaletteMode('search');
+        setPaletteOpen(true);
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key.toLowerCase() === 'p')) {
         e.preventDefault();
+        setPaletteMode('jump');
         setPaletteOpen((o) => !o);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
@@ -1527,6 +1731,18 @@ export function App() {
             checked: activeTab === 'insights',
             run: () => setActiveTab('insights'),
           },
+          {
+            id: 'tab-channel',
+            label: 'Channel',
+            hint:
+              channelContested > 0
+                ? `${channelContested} contested`
+                : liveAgentCount > 0
+                  ? `${liveAgentCount} agent${liveAgentCount === 1 ? '' : 's'}`
+                  : undefined,
+            checked: activeTab === 'channel',
+            run: () => setActiveTab('channel'),
+          },
           { id: 'sep1', separator: true },
           {
             id: 'sidebar',
@@ -1571,6 +1787,17 @@ export function App() {
               },
             })),
           },
+          {
+            id: 'density',
+            label: 'Density',
+            hint: density === 'compact' ? 'Compact' : 'Comfortable',
+            submenu: (['comfortable', 'compact'] as const).map((d) => ({
+              id: `density-${d}`,
+              label: d === 'compact' ? 'Compact' : 'Comfortable',
+              checked: density === d,
+              run: () => setDensity(d),
+            })),
+          },
           { id: 'sep4', separator: true },
           { id: 'palette', label: 'Command Palette...', hint: 'Ctrl+K', run: () => setPaletteOpen(true) },
         ],
@@ -1605,20 +1832,31 @@ export function App() {
             run: () => updateCollapsed(allCollapsed ? new Set() : new Set(allClusters)),
           },
           { id: 'relayout', label: 'Re-layout', run: () => graphRef.current?.relayout() },
-          {
-            id: 'clear-focus',
-            label: 'Clear Focus Mode',
-            hint: 'Esc',
-            disabled: focusId === null,
-            run: () => setFocusId(null),
-          },
         ],
       },
       {
         id: 'go',
         label: 'Go',
         entries: [
-          { id: 'goto-file', label: 'Go to File...', hint: 'Ctrl+K', run: () => setPaletteOpen(true) },
+          {
+            id: 'goto-file',
+            label: 'Go to File...',
+            hint: 'Ctrl+K',
+            run: () => {
+              setPaletteMode('jump');
+              setPaletteOpen(true);
+            },
+          },
+          {
+            id: 'find-in-files',
+            label: 'Find in Files...',
+            hint: 'Ctrl+Shift+F',
+            run: () => {
+              setPaletteSeed(undefined);
+              setPaletteMode('search');
+              setPaletteOpen(true);
+            },
+          },
           { id: 'sep1', separator: true },
           {
             id: 'review-next',
@@ -1689,7 +1927,6 @@ export function App() {
     coverage,
     allCollapsed,
     allClusters,
-    focusId,
     unreviewed.length,
     board,
     selectedPaths.size,
@@ -1704,7 +1941,16 @@ export function App() {
     doCreateFile,
     doCreateFolder,
     selectedDir,
+    themeChoice,
+    density,
   ]);
+
+  /** cluster -> colour as the graph assigned it, for the tree's folder echo */
+  const clusterColorMap = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const c of stats.clusters) out[c.name] = c.color;
+    return out;
+  }, [stats.clusters]);
 
   const ctxItems = useMemo<MenuItem[]>(() => {
     if (!ctxMenu) return [];
@@ -1952,6 +2198,12 @@ export function App() {
         run: () => setActiveTab('insights'),
       },
       {
+        id: 'cmd:channel',
+        label: 'Open the agents’ channel',
+        kind: 'command',
+        run: () => setActiveTab('channel'),
+      },
+      {
         id: 'cmd:fit',
         label: 'Graph: fit view',
         hint: 'Ctrl+0',
@@ -2031,8 +2283,15 @@ export function App() {
    * place.
    */
   const [detailsClosed, setDetailsClosed] = useState(false);
+  /*
+   * A selection that lands while the inspector is folded does not unfold it
+   * — that was the "panel keeps popping" the sidebar was accused of. It
+   * lights the section's header instead, until it is opened.
+   */
+  const [inspectorGlow, setInspectorGlow] = useState(false);
   useEffect(() => {
-    setDetailsClosed(false);
+    if (selected && detailsClosed) setInspectorGlow(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
   const selection = useMemo(() => {
@@ -2085,40 +2344,91 @@ export function App() {
       style={
         {
           '--terminal-h': `${terminalHeight}px`,
-          '--details-w': selection && !detailsClosed ? `${detailsWidth}px` : '0px',
+          /* --details-w is gone: the inspector lives in the left sidebar now,
+             so the corner alerts always own the right edge */
+          '--overlay-top': `${overlayTop}px`,
         } as React.CSSProperties
       }
     >
       <div className="topbar" style={RESERVE_TRAFFIC_LIGHTS ? { paddingLeft: 76 } : undefined}>
         <span className="brand"><FlareMark size={15} />Flare</span>
         <MenuBar menus={appMenus} />
-        <input
-          className="search"
-          placeholder="search files…  (Enter to jump)"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={onSearchKey}
-          data-testid="search-input"
-        />
+        <div className="search-wrap">
+          <input
+            className="search"
+            placeholder="search files…  (Enter to jump)"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setSearchHintsHidden(false);
+            }}
+            onFocus={() => {
+              setSearchFocused(true);
+              setSearchHintsHidden(false);
+            }}
+            onBlur={() => setSearchFocused(false)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                openTextSearch(searchQuery);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Escape') setSearchHintsHidden(true);
+              onSearchKey(e);
+            }}
+            data-testid="search-input"
+          />
+          {/*
+            What the box can do with what you typed, while you type it: the
+            files that match (click one to jump), and the way into a text
+            search. Enter keeps its old meaning — jump the graph to the first
+            match — so the box is still the fastest way to a node.
+          */}
+          {searchFocused && !searchHintsHidden && searchQuery.trim() !== '' && (
+            <div className="search-hints" data-testid="search-hints">
+              {searchHints.map((id) => (
+                <button
+                  key={id}
+                  className="search-hint"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    selectSingle(id);
+                    graphRef.current?.focusNode(id);
+                    setActiveTab('graph');
+                    setSearchHintsHidden(true);
+                  }}
+                >
+                  <span className="search-hint-kind">◇</span>
+                  <span className="mono search-hint-path">{id}</span>
+                </button>
+              ))}
+              <button
+                className="search-hint action"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => openTextSearch(searchQuery)}
+                data-testid="search-hint-find"
+              >
+                <span className="search-hint-kind">⌕</span>
+                Find “{searchQuery.trim()}” in files
+                <kbd>Ctrl ↵</kbd>
+              </button>
+              <div className="search-hint-foot">
+                <kbd>↵</kbd> jumps the graph to the first match
+              </div>
+            </div>
+          )}
+        </div>
         <span className="spacer" />
         <span className="project-chip" title={project.root} data-testid="project-name">
           {project.name}
         </span>
-        {focusId && (
-          <span className="badge" title="Focus mode: only this file and its 2-hop neighbourhood are shown. Esc or ✕ to clear.">
-            focus: {focusId.split('/').pop()}{' '}
-            <a style={{ cursor: 'pointer' }} onClick={() => setFocusId(null)}>
-              ✕
-            </a>
-          </span>
-        )}
         <button
           className="btn"
           title="Local history — every change burst this session is snapshotted; restore a file or the whole tree from any point"
           onClick={() => setShowTimeline((s) => !s)}
           data-testid="btn-timeline"
         >
-          ↺ History
+          <IconHistory /> History
         </button>
         {(insights?.summary.criticals ?? 0) > 0 && (
           <span
@@ -2145,6 +2455,20 @@ export function App() {
             </a>
           </span>
         )}
+        {/*
+          Risky changes an agent made, as a chip beside the review count.
+
+          Same shape and the same reason: a queue that is *usually* non-empty
+          during an agent session cannot be a panel, because a panel that is
+          usually open is a panel permanently covering something. The count is
+          what has to be visible; the cards are one click away.
+        */}
+        <RiskAlerts
+          alerts={alerts}
+          onReview={reviewAlert}
+          onDismiss={dismissAlert}
+          onDismissAll={dismissAllAlerts}
+        />
         {/*
           Changed-since-last-review, as one chip in the corner.
 
@@ -2195,10 +2519,10 @@ export function App() {
         <button
           className="btn"
           onClick={() => setPaletteOpen(true)}
-          title="Command palette (Ctrl+K) — jump to any file or run any command"
+          title={`Command palette (${IS_MAC ? '⌘K' : 'Ctrl+K'}) — jump to any file or run any command`}
           data-testid="btn-palette"
         >
-          ⌘K
+          {IS_MAC ? '⌘K' : 'Ctrl K'}
         </button>
         <WindowControls />
       </div>
@@ -2210,8 +2534,14 @@ export function App() {
               {/* Creating a file used to be reachable only by right-clicking a
                   row, which is not a place anyone looks for it. */}
               <div className="explorer-head" data-testid="explorer-head">
+                {/*
+                  The panel introduces itself: the project's name, not the word
+                  "Explorer" — a sidebar with a name reads as a place, and the
+                  overline keeps the panel's role for anyone who needs it.
+                */}
                 <span className="explorer-title" title={selectedDir === '' ? 'New items go in the project root' : `New items go in ${selectedDir}/`}>
-                  Explorer
+                  <span className="explorer-overline">Explorer</span>
+                  <span className="explorer-project">{project.name}</span>
                   {selectedDir !== '' && <span className="explorer-target">{selectedDir}/</span>}
                 </span>
                 <button
@@ -2260,6 +2590,7 @@ export function App() {
                   key={project?.root ?? 'none'}
                   tree={fileTree}
                   gitFiles={gitStatus?.files ?? {}}
+                  clusterColors={clusterColorMap}
                   selected={selected}
                   selectedPaths={selectedPaths}
                   onOpenFile={openFile}
@@ -2272,6 +2603,213 @@ export function App() {
                     openContextMenu({ x, y, id: path === '' ? null : path })
                   }
                 />
+              )}
+              {/*
+                The inspector: what used to be the right-hand details panel,
+                as a permanent section of the sidebar. It is always here, in
+                this slot, populated or not — so it never appears somewhere
+                new, and a selection made while it is folded lights its
+                header rather than unfolding it under your pointer.
+              */}
+              <section
+                className={`side-inspector${detailsClosed ? ' folded' : ''}${inspectorGlow && detailsClosed ? ' glow' : ''}`}
+                data-testid="side-inspector"
+              >
+                <button
+                  className="side-sec-head inspector-head"
+                  aria-expanded={!detailsClosed}
+                  title={detailsClosed ? 'Unfold the inspector' : 'Fold the inspector away'}
+                  onClick={() => {
+                    setDetailsClosed((v) => !v);
+                    setInspectorGlow(false);
+                  }}
+                  data-testid="inspector-toggle"
+                >
+                  <span className="side-sec-chevron">{detailsClosed ? '▸' : '▾'}</span>
+                  Inspector
+                  {selection ? (
+                    <span className="mono inspector-name">
+                      {selection.type === 'dir'
+                        ? `${selection.dir}/`
+                        : selection.type === 'symbol'
+                          ? selection.symbol
+                          : selection.path.split('/').pop()}
+                    </span>
+                  ) : (
+                    <span className="inspector-none">nothing selected</span>
+                  )}
+                </button>
+                {!detailsClosed && selection && (
+                  <div className="details-panel side-info">
+                  {/*
+                    A way out that is not "go and click the empty canvas".
+                    The panel opens by selecting something, and until now that
+                    was also the only way to close it — so dismissing it meant
+                    giving up your selection, which is a different intention
+                    entirely. Pinned rather than in the flow so it works for a
+                    file and a directory without either of them growing a
+                    header of its own.
+                  */}
+                  <button
+                    className="details-close"
+                    title="Close this panel — the node stays selected"
+                    aria-label="Close details"
+                    onClick={() => setDetailsClosed(true)}
+                    data-testid="details-close"
+                  >
+                    ✕
+                  </button>
+                  {selection.type === 'file' && (
+                    <DetailsPanel
+                      nodeId={selection.path}
+                      gitState={gitStatus?.files[selection.path]}
+                      reviewInfo={reviewInfo}
+                      changedAt={changedAt}
+                      changedBy={changedBy}
+                      churn={churn}
+                      coverage={coverage[selection.path] ?? null}
+                      insights={insights}
+                      refreshKey={refreshKey}
+                      isExpanded={expandedFiles.has(selection.path)}
+                      onOpenFile={openFile}
+                      onOpenDiff={openDiff}
+                      onNewTask={taskFromSelection}
+                      onSelect={(p) => {
+                        setSelected(p);
+                        graphRef.current?.focusNode(p);
+                      }}
+                      onApprove={approve}
+                      onExpandSymbols={(p) => void expandFile(p)}
+                      onCollapseSymbols={collapseFile}
+                      onRestored={() => {
+                        setRefreshKey((k) => k + 1);
+                        toast('File reverted to snapshot', 'success');
+                      }}
+                    />
+                  )}
+                  {selection.type === 'dir' && (
+                    <div data-testid="dir-details">
+                      <h3>▣ {selection.dir}/</h3>
+                      <div className="kv">
+                        <span className="k">files</span>
+                        <span>{selection.members.length}</span>
+                        <span className="k">lines</span>
+                        <span>{selection.members.reduce((a, n) => a + n.loc, 0)}</span>
+                        <span className="k">in cycles</span>
+                        <span>{selection.members.filter((n) => n.cycleId !== null).length}</span>
+                        <span className="k">untested</span>
+                        <span>
+                          {selection.members.filter((n) => !n.isTest && n.testedBy === 0).length}
+                        </span>
+                      </div>
+                      <div className="actions">
+                        <button className="btn primary" onClick={() => toggleDir(selection.dir)}>
+                          Expand directory
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {selection.type === 'symbol' && (
+                    <div data-testid="symbol-details">
+                      <h3 className="mono">
+                        {selection.symbol}
+                        <span className="muted"> · {selection.info?.kind ?? 'symbol'}</span>
+                      </h3>
+                      <div className="kv">
+                        <span className="k">file</span>
+                        <span className="mono">{selection.path}</span>
+                        <span className="k">line</span>
+                        <span>{selection.info?.line ?? '?'}</span>
+                        <span className="k">length</span>
+                        <span>{selection.info?.loc ?? '?'} lines</span>
+                        <span className="k">exported</span>
+                        <span>{selection.info?.exported ? 'yes' : 'no'}</span>
+                      </div>
+                      <div className="actions">
+                        <button
+                          className="btn primary"
+                          onClick={() => openFile(selection.path, selection.info?.line)}
+                        >
+                          Open at line
+                        </button>
+                        <button className="btn" onClick={() => collapseFile(selection.path)}>
+                          Collapse symbols
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  </div>
+                )}
+                {!detailsClosed && !selection && (
+                  <div className="inspector-empty">
+                    Select a file on the graph or in the tree — its metrics, risk and dependents land here.
+                  </div>
+                )}
+              </section>
+              {/*
+                Below the tree, deliberately: git status lands whenever the
+                watcher does, and a section that pops in above the tree
+                shifts every row under the pointer mid-click.
+              */}
+              {gitStatus && Object.keys(gitStatus.files).length > 0 && (
+                <details className="side-changed" open data-testid="side-changed">
+                  <summary className="side-sec-head">
+                    Changed
+                    <span className="side-sec-count">{Object.keys(gitStatus.files).length}</span>
+                  </summary>
+                  <div className="side-changed-list">
+                    {Object.entries(gitStatus.files).slice(0, 30).map(([p, st]) => (
+                      <div
+                        key={p}
+                        className="side-changed-row"
+                        role="button"
+                        tabIndex={0}
+                        title={`${p} — ${st}. Click to select on the graph, double-click to open.`}
+                        onClick={() => selectSingle(p)}
+                        onDoubleClick={() => openFile(p)}
+                        onKeyDown={(e) => e.key === 'Enter' && selectSingle(p)}
+                      >
+                        <span className="dot" style={{ background: STATE_COLOR[st] }} />
+                        <span className="scr-name">{p.split('/').pop()}</span>
+                        <button
+                          className="row-btn"
+                          title="Diff this file against git HEAD"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openDiff(p, 'head');
+                          }}
+                        >
+                          diff
+                        </button>
+                        <span className="scr-state">{st[0].toUpperCase()}</span>
+                      </div>
+                    ))}
+                    {Object.keys(gitStatus.files).length > 30 && (
+                      <div className="scr-more">+{Object.keys(gitStatus.files).length - 30} more</div>
+                    )}
+                  </div>
+                </details>
+              )}
+              {/*
+                Structure: the folders bar, docked. It used to float over the
+                canvas (and sit on the districts' first header); as the
+                sidebar's bottom section it works from every tab, and the
+                wheel view keeps its own richer index rail instead.
+              */}
+              {stats.clusters.length > 0 && !(activeTab === 'graph' && graphView === 'wheel') && (
+                <div className="side-folders">
+                  <LensLegend
+                    show="folders"
+                    lens={lens}
+                    emptyNote={null}
+                    clusters={stats.clusters}
+                    onToggleDir={toggleDir}
+                    onFoldAll={() => updateCollapsed(new Set(allClusters))}
+                    onUnfoldAll={() => updateCollapsed(new Set())}
+                    collapsed={legendCollapsed}
+                    onToggleCollapsed={() => setLegendCollapsed((on) => !on)}
+                  />
+                </div>
               )}
             </div>
             <Splitter direction="horizontal" onDrag={(x) => setSidebarWidth(Math.max(140, Math.min(500, x)))} />
@@ -2291,7 +2829,7 @@ export function App() {
                   pinned, segmented, and carrying the counts that say whether
                   they want attention.
                 */}
-                <div className="view-tabs" role="tablist" aria-label="Views">
+                <div className="view-tabs" role="tablist" aria-label="Views" ref={tabsRef}>
                   <div
                     className={`view-tab${activeTab === 'graph' ? ' active' : ''}`}
                     role="tab"
@@ -2300,7 +2838,7 @@ export function App() {
                     data-testid="tab-graph"
                     title="The codebase as a map — every file a node, every import an edge"
                   >
-                    <span className="vt-mark" aria-hidden="true">◆</span> Graph
+                    <span className="vt-mark" aria-hidden="true"><IconGraph /></span> Graph
                   </div>
                   <div
                     className={`view-tab${activeTab === 'board' ? ' active' : ''}`}
@@ -2310,7 +2848,7 @@ export function App() {
                     data-testid="tab-board"
                     title="Manage your tasks via MCP — an agent can list them, take one, and move its own card"
                   >
-                    <span className="vt-mark" aria-hidden="true">☰</span> Control panel
+                    <span className="vt-mark" aria-hidden="true"><IconBoard /></span> Control panel
                     {/* what is waiting on a person outranks how much work exists */}
                     {waitingOnYou > 0 ? (
                       <span className="vt-count warn" title="design decisions and questions waiting on you">
@@ -2328,7 +2866,7 @@ export function App() {
                     data-testid="tab-review"
                     title="What changed, whether anything checked it, and which files deserve your attention"
                   >
-                    <span className="vt-mark" aria-hidden="true">✓</span> Review
+                    <span className="vt-mark" aria-hidden="true"><IconReview /></span> Review
                     {unverifiedBursts > 0 && (
                       <span className="vt-count warn" title="changes nothing has checked">
                         {unverifiedBursts}
@@ -2343,11 +2881,37 @@ export function App() {
                     data-testid="tab-insights"
                     title="Metrics and severity-ranked issues across the repo"
                   >
-                    <span className="vt-mark" aria-hidden="true">◈</span> Insights
+                    <span className="vt-mark" aria-hidden="true"><IconInsights /></span> Insights
                     {(insights?.summary.criticals ?? 0) > 0 && (
                       <span className="vt-count crit" title="critical issues">
                         {insights!.summary.criticals}
                       </span>
+                    )}
+                  </div>
+                  <div
+                    className={`view-tab${activeTab === 'channel' ? ' active' : ''}`}
+                    role="tab"
+                    aria-selected={activeTab === 'channel'}
+                    onClick={() => setActiveTab('channel')}
+                    data-testid="tab-channel"
+                    title="What the agents are telling each other about the work — who is taking which files, and whether they are announcing them at all"
+                  >
+                    <span className="vt-mark" aria-hidden="true"><IconChannel /></span> Channel
+                    {/*
+                      Two agents heading for the same file outranks the count of
+                      people in the room: one is something to answer, the other
+                      is just how many are here.
+                    */}
+                    {channelContested > 0 ? (
+                      <span className="vt-count crit" title="files two agents have both said they are taking">
+                        {channelContested}
+                      </span>
+                    ) : (
+                      liveAgentCount > 0 && (
+                        <span className="vt-count" title="agents connected over MCP">
+                          {liveAgentCount}
+                        </span>
+                      )
                     )}
                   </div>
                 </div>
@@ -2424,7 +2988,6 @@ export function App() {
                     reviewInfo={reviewInfo}
                     selected={selected}
                     searchQuery={searchQuery}
-                    focusId={focusId}
                     lens={lens}
                     collapsedDirs={collapsedDirs}
                     expandedFiles={expandedFiles}
@@ -2432,6 +2995,7 @@ export function App() {
                     recentChanges={recentChanges}
                     selectedPaths={selectedPaths}
                     conflicts={crossings}
+                    held={spokenFor}
                     onSelect={selectSingle}
                     onToggleSelect={toggleSelect}
                     onBoxSelect={boxSelect}
@@ -2479,60 +3043,96 @@ export function App() {
                   {/* the toolbar only exists once the persisted collapse state
                       has loaded — otherwise a fold/unfold click made in the
                       first moments is silently overwritten by that load */}
-                  <div className="graph-overlay" style={{ display: viewReady ? undefined : 'none' }}>
-                    <div className="lens-switcher" data-testid="lens-switcher">
-                      <span className="switch-label" title="pick the question you want the colours to answer">
-                        Colour by
-                      </span>
-                      {LENSES.filter((l) => l.id !== 'coverage' || Object.keys(coverage).length > 0).map((l) => (
+                  <div
+                    className="graph-overlay"
+                    ref={graphBarRef}
+                    style={{ display: viewReady ? undefined : 'none' }}
+                  >
+                    {/*
+                      The switchers, folded into two value-first menus at the
+                      canvas's top right. The full rows of buttons owned the
+                      whole top edge; a chip that says what is on and unfolds
+                      on click says the same thing from a corner. The menu
+                      panels stay mounted (display, not existence) so their
+                      state is inspectable whether or not they are open.
+                    */}
+                    <div className="canvas-menus">
+                      <LensLegend
+                        show="reading"
+                        lens={lens}
+                        emptyNote={lensNote}
+                        clusters={stats.clusters}
+                        onToggleDir={toggleDir}
+                        onFoldAll={() => updateCollapsed(new Set(allClusters))}
+                        onUnfoldAll={() => updateCollapsed(new Set())}
+                        collapsed={legendCollapsed}
+                        onToggleCollapsed={() => setLegendCollapsed((on) => !on)}
+                      />
+                      <div className="drop">
                         <button
-                          key={l.id}
-                          className={`lens-btn${lens === l.id ? ' active' : ''}`}
-                          title={`${l.hint}\n${l.reading}`}
-                          onClick={() => setLens(l.id)}
-                          data-testid={`lens-${l.id}`}
+                          className={`drop-chip${canvasMenu === 'lens' ? ' on' : ''}`}
+                          aria-expanded={canvasMenu === 'lens'}
+                          title="Lens — pick the question you want the colours to answer"
+                          onClick={() => setCanvasMenu((m) => (m === 'lens' ? null : 'lens'))}
+                          data-testid="lens-menu"
                         >
-                          {l.label}
+                          <span className="drop-label">Lens</span>
+                          {LENSES.find((l) => l.id === lens)?.label ?? lens}
+                          <span className="drop-caret">▾</span>
                         </button>
-                      ))}
-                    </div>
-                    <div className="lens-switcher" data-testid="view-switcher">
-                      <span className="switch-label" title="pick how the same graph is drawn">
-                        Draw as
-                      </span>
-                      {(
-                        [
-                          {
-                            id: 'canvas',
-                            label: '▤ Canvas',
-                            hint: 'Dependency cards on a board, ordered left-to-right: foundations left, entry points right. Best for reading structure and dragging things around.',
-                          },
-                          {
-                            id: 'wheel',
-                            label: '◎ Wheel',
-                            hint: 'Every file on one ring, grouped by folder, dependencies drawn as chords through the middle. Best for "what talks to what" across the whole repo.',
-                          },
-                          {
-                            id: 'districts',
-                            label: '▩ Districts',
-                            hint: 'Treemap where tile area is lines of code. Best for "how big is this repo and where does the mass sit".',
-                          },
-                        ] as const
-                      ).map((v) => (
+                        <div className={`drop-panel${canvasMenu === 'lens' ? ' open' : ''}`} role="menu">
+                          {LENSES.filter((l) => l.id !== 'coverage' || Object.keys(coverage).length > 0).map((l) => (
+                            <button
+                              key={l.id}
+                              className={`drop-item${lens === l.id ? ' active' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={lens === l.id}
+                              title={`${l.hint}
+${l.reading}`}
+                              onClick={() => {
+                                setLens(l.id);
+                                setCanvasMenu(null);
+                              }}
+                              data-testid={`lens-${l.id}`}
+                            >
+                              {l.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="drop">
                         <button
-                          key={v.id}
-                          className={`lens-btn${graphView === v.id ? ' active' : ''}`}
-                          title={v.hint}
-                          onClick={() => setGraphView(v.id)}
-                          data-testid={`view-${v.id}`}
+                          className={`drop-chip${canvasMenu === 'view' ? ' on' : ''}`}
+                          aria-expanded={canvasMenu === 'view'}
+                          title="View — pick how the same graph is drawn"
+                          onClick={() => setCanvasMenu((m) => (m === 'view' ? null : 'view'))}
+                          data-testid="view-menu"
                         >
-                          {v.label}
+                          <span className="drop-label">View</span>
+                          {CANVAS_VIEWS.find((v) => v.id === graphView)?.label ?? graphView}
+                          <span className="drop-caret">▾</span>
                         </button>
-                      ))}
-                    </div>
-                    <div className="lens-switcher" data-testid="layout-switcher">
+                        <div className={`drop-panel${canvasMenu === 'view' ? ' open' : ''}`} role="menu">
+                          {CANVAS_VIEWS.map((v) => (
+                            <button
+                              key={v.id}
+                              className={`drop-item${graphView === v.id ? ' active' : ''}`}
+                              role="menuitemradio"
+                              aria-checked={graphView === v.id}
+                              title={v.hint}
+                              onClick={() => {
+                                setGraphView(v.id);
+                                setCanvasMenu(null);
+                              }}
+                              data-testid={`view-${v.id}`}
+                            >
+                              {v.glyph} {v.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <button
-                        className="lens-btn"
+                        className="drop-chip"
                         title={
                           graphView === 'canvas'
                             ? 'Re-run the layout from scratch and re-frame it. Also forgets any cards you dragged.'
@@ -2541,27 +3141,12 @@ export function App() {
                         onClick={() => graphRef.current?.relayout()}
                         data-testid="layout-reset"
                       >
-                        ↻ Re-layout
+                        <IconRelayout />
                       </button>
-                      {/*
-                        Fold-all lived here too, doing exactly what Fold all /
-                        Unfold all in the folders bar does. Two controls for one
-                        action in two places is how they end up disagreeing
-                        about their own label; folding belongs with the folders.
-                      */}
                     </div>
-                    {/* Zoom, fit, centre and the shortcut list live on the
-                        canvas now, in CanvasTools — see the note there. */}
-                    <LensLegend
-                      lens={lens}
-                      emptyNote={lensNote}
-                      clusters={stats.clusters}
-                      onToggleDir={toggleDir}
-                      onFoldAll={() => updateCollapsed(new Set(allClusters))}
-                      onUnfoldAll={() => updateCollapsed(new Set())}
-                      collapsed={legendCollapsed}
-                      onToggleCollapsed={() => setLegendCollapsed((on) => !on)}
-                    />
+                    {canvasMenu && (
+                      <div className="drop-backdrop" onClick={() => setCanvasMenu(null)} />
+                    )}
                   </div>
 
                   {/* What you can do with a set of files, where the set is —
@@ -2573,62 +3158,66 @@ export function App() {
                         {plural(selectedPaths.size, 'file')} selected
                       </span>
                       <span className="bulk-sep" />
-                      <button
-                        className="btn primary"
-                        title="Copy the paths plus what the graph knows about them — dependents, coverage, cycles — ready to paste into an agent"
-                        onClick={() => copyPaths([...selectedPaths], false)}
-                        data-testid="bulk-copy"
-                      >
-                        Copy for agent
-                      </button>
                       {/*
-                        The same two actions over the blast radius.
-
-                        Paired with their plain counterparts rather than hidden
-                        behind a modifier, because which one you want is a
-                        decision about the change — "rename this helper" needs
+                        The two "…and everything that imports them" variants
+                        are halves of a split button now, not four peers in a
+                        row of eight. Paired rather than hidden behind a
+                        modifier, because which one you want is a decision
+                        about the change — "rename this helper" needs
                         everything that calls it, "fix this typo" does not —
                         and a modifier key is a decision you cannot see. The
                         count carries the warning: pressing a button that
                         quietly grew a 3-file selection to 40 is how you paste
                         the repo into an agent by accident.
                       */}
-                      <button
-                        className="btn"
-                        disabled={connectedExtra === 0}
-                        title={
-                          connectedExtra === 0
-                            ? 'Nothing imports these files — connected would copy the same set'
-                            : `Copy these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them, directly or through something else`
-                        }
-                        onClick={() => copyPaths(connectedSelection, false)}
-                        data-testid="bulk-copy-connected"
-                      >
-                        Copy connected
-                        {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
-                      </button>
-                      <button
-                        className="btn"
-                        title="File these as one task on the board, with the same context attached"
-                        onClick={() => taskFromSelection([...selectedPaths])}
-                        data-testid="bulk-task"
-                      >
-                        New task
-                      </button>
-                      <button
-                        className="btn"
-                        disabled={connectedExtra === 0}
-                        title={
-                          connectedExtra === 0
-                            ? 'Nothing imports these files — the task would carry the same set'
-                            : `File a task covering these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them`
-                        }
-                        onClick={() => taskFromSelection(connectedSelection)}
-                        data-testid="bulk-task-connected"
-                      >
-                        New task on connected
-                        {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
-                      </button>
+                      <span className="bulk-group">
+                        <button
+                          className="btn primary"
+                          title="Copy the paths plus what the graph knows about them — dependents, coverage, cycles — ready to paste into an agent"
+                          onClick={() => copyPaths([...selectedPaths], false)}
+                          data-testid="bulk-copy"
+                        >
+                          Copy for agent
+                        </button>
+                        <button
+                          className="btn"
+                          disabled={connectedExtra === 0}
+                          title={
+                            connectedExtra === 0
+                              ? 'Nothing imports these files — connected would copy the same set'
+                              : `Copy these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them, directly or through something else`
+                          }
+                          onClick={() => copyPaths(connectedSelection, false)}
+                          data-testid="bulk-copy-connected"
+                        >
+                          + connected
+                          {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
+                        </button>
+                      </span>
+                      <span className="bulk-group">
+                        <button
+                          className="btn"
+                          title="File these as one task on the board, with the same context attached"
+                          onClick={() => taskFromSelection([...selectedPaths])}
+                          data-testid="bulk-task"
+                        >
+                          New task
+                        </button>
+                        <button
+                          className="btn"
+                          disabled={connectedExtra === 0}
+                          title={
+                            connectedExtra === 0
+                              ? 'Nothing imports these files — the task would carry the same set'
+                              : `File a task covering these plus the ${plural(connectedExtra, 'file')} that ${connectedExtra === 1 ? 'imports' : 'import'} them`
+                          }
+                          onClick={() => taskFromSelection(connectedSelection)}
+                          data-testid="bulk-task-connected"
+                        >
+                          + connected
+                          {connectedExtra > 0 && <span className="bulk-plus">+{connectedExtra}</span>}
+                        </button>
+                      </span>
                       {[...selectedPaths].some((p) => unreviewed.includes(p)) && (
                         <button
                           className="btn warn"
@@ -2688,6 +3277,7 @@ export function App() {
                 {activeTab === 'review' && (
                   <ReviewPanel
                     bursts={bursts}
+                    summaries={summaries}
                     snapshots={snapshots}
                     insights={insights}
                     reviewInfo={reviewInfo}
@@ -2731,7 +3321,6 @@ export function App() {
                           reviewInfo={reviewInfo}
                           selected={selected}
                           searchQuery=""
-                          focusId={null}
                           lens="activity"
                           collapsedDirs={EMPTY_SET}
                           expandedFiles={EMPTY_SET}
@@ -2739,6 +3328,7 @@ export function App() {
                           recentChanges={recentChanges}
                           selectedPaths={burstPaths}
                           conflicts={crossings}
+                          held={spokenFor}
                           onSelect={selectSingle}
                           onToggleSelect={toggleSelect}
                           onBoxSelect={boxSelect}
@@ -2758,6 +3348,20 @@ export function App() {
                       selectSingle(p);
                     }}
                     onOpenFile={openFile}
+                  />
+                )}
+                {activeTab === 'channel' && (
+                  <ChannelPanel
+                    agents={mcpAgents.agents}
+                    channel={mcpAgents.channel}
+                    bursts={bursts}
+                    onSelectFile={(p) => {
+                      selectSingle(p);
+                      setActiveTab('graph');
+                    }}
+                    onSelectFiles={selectPaths}
+                    onSay={(input) => void api.agentsSay(input)}
+                    mcpUrl={mcpInfo.port ? mcpUrl(mcpInfo.port, mcpInfo.slug) : null}
                   />
                 )}
                 {tabs.map((t) => (
@@ -2793,117 +3397,7 @@ export function App() {
               </div>
             </div>
 
-            {selection && !detailsClosed && (
-              <>
-                <Splitter
-                  direction="horizontal"
-                  onDrag={(x) => setDetailsWidth(Math.max(220, Math.min(560, window.innerWidth - x)))}
-                />
-                <div className="details-panel" style={{ width: detailsWidth }}>
-                  {/*
-                    A way out that is not "go and click the empty canvas".
-                    The panel opens by selecting something, and until now that
-                    was also the only way to close it — so dismissing it meant
-                    giving up your selection, which is a different intention
-                    entirely. Pinned rather than in the flow so it works for a
-                    file and a directory without either of them growing a
-                    header of its own.
-                  */}
-                  <button
-                    className="details-close"
-                    title="Close this panel — the node stays selected"
-                    aria-label="Close details"
-                    onClick={() => setDetailsClosed(true)}
-                    data-testid="details-close"
-                  >
-                    ✕
-                  </button>
-                  {selection.type === 'file' && (
-                    <DetailsPanel
-                      nodeId={selection.path}
-                      gitState={gitStatus?.files[selection.path]}
-                      reviewInfo={reviewInfo}
-                      changedAt={changedAt}
-                      changedBy={changedBy}
-                      churn={churn}
-                      coverage={coverage[selection.path] ?? null}
-                      insights={insights}
-                      refreshKey={refreshKey}
-                      isExpanded={expandedFiles.has(selection.path)}
-                      onOpenFile={openFile}
-                      onOpenDiff={openDiff}
-                      onNewTask={taskFromSelection}
-                      onSelect={(p) => {
-                        setSelected(p);
-                        graphRef.current?.focusNode(p);
-                      }}
-                      onApprove={approve}
-                      onFocus={(p) => {
-                        setFocusId(p);
-                        setActiveTab('graph');
-                      }}
-                      onExpandSymbols={(p) => void expandFile(p)}
-                      onCollapseSymbols={collapseFile}
-                      onRestored={() => {
-                        setRefreshKey((k) => k + 1);
-                        toast('File reverted to snapshot', 'success');
-                      }}
-                    />
-                  )}
-                  {selection.type === 'dir' && (
-                    <div data-testid="dir-details">
-                      <h3>▣ {selection.dir}/</h3>
-                      <div className="kv">
-                        <span className="k">files</span>
-                        <span>{selection.members.length}</span>
-                        <span className="k">lines</span>
-                        <span>{selection.members.reduce((a, n) => a + n.loc, 0)}</span>
-                        <span className="k">in cycles</span>
-                        <span>{selection.members.filter((n) => n.cycleId !== null).length}</span>
-                        <span className="k">untested</span>
-                        <span>
-                          {selection.members.filter((n) => !n.isTest && n.testedBy === 0).length}
-                        </span>
-                      </div>
-                      <div className="actions">
-                        <button className="btn primary" onClick={() => toggleDir(selection.dir)}>
-                          Expand directory
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {selection.type === 'symbol' && (
-                    <div data-testid="symbol-details">
-                      <h3 className="mono">
-                        {selection.symbol}
-                        <span className="muted"> · {selection.info?.kind ?? 'symbol'}</span>
-                      </h3>
-                      <div className="kv">
-                        <span className="k">file</span>
-                        <span className="mono">{selection.path}</span>
-                        <span className="k">line</span>
-                        <span>{selection.info?.line ?? '?'}</span>
-                        <span className="k">length</span>
-                        <span>{selection.info?.loc ?? '?'} lines</span>
-                        <span className="k">exported</span>
-                        <span>{selection.info?.exported ? 'yes' : 'no'}</span>
-                      </div>
-                      <div className="actions">
-                        <button
-                          className="btn primary"
-                          onClick={() => openFile(selection.path, selection.info?.line)}
-                        >
-                          Open at line
-                        </button>
-                        <button className="btn" onClick={() => collapseFile(selection.path)}>
-                          Collapse symbols
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+            {/* the details panel lives in the left sidebar now — see .side-info */}
           </div>
 
           {showTimeline && (
@@ -2955,16 +3449,8 @@ export function App() {
         >
           {Object.keys(gitStatus?.files ?? {}).length} changed on disk
         </span>
-        {unreviewed.length > 0 && (
-          <span
-            className="item"
-            style={{ color: 'var(--sig-warn)', cursor: 'pointer' }}
-            title="Files changed since you last approved, ordered by how much depends on them. Click to jump to the riskiest."
-            onClick={reviewNext}
-          >
-            {unreviewed.length} to review
-          </span>
-        )}
+        {/* "N to review" is not repeated here: the top-bar chip and the Review
+            tab's badge already carry the same count with the same actions */}
         <span className="spacer" />
         {mcpInfo.port > 0 && (
           <span
@@ -2982,10 +3468,31 @@ export function App() {
             ◆ MCP {mcpInfo.slug ? `/${mcpInfo.slug}` : `:${mcpInfo.port}`}
           </span>
         )}
-        <span className="item mono muted">{project.root}</span>
+        <span className="item mono muted statusbar-path" title={project.root}>
+          {shortPath(project.root)}
+        </span>
       </div>
 
-      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        items={paletteItems}
+        mode={paletteMode}
+        onModeChange={setPaletteMode}
+        seedQuery={paletteSeed}
+        onClose={() => {
+          setPaletteOpen(false);
+          setPaletteSeed(undefined);
+        }}
+        onSearch={(q, o) => api.searchText(q, o)}
+        onOpenHit={(p, line) => openFile(p, line)}
+        pathColor={(p) => clusterColorMap[p.includes('/') ? p.slice(0, p.indexOf('/')) : '(root)']}
+        onReplace={(q, r, o, paths) =>
+          api.searchReplace(q, r, o, paths).then((res) => {
+            toast(`Replaced ${res.replacements} in ${res.files} file${res.files === 1 ? '' : 's'}`, 'success');
+            return res;
+          })
+        }
+      />
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={() => setCtxMenu(null)} />
       )}
@@ -3029,7 +3536,6 @@ export function App() {
                 reviewInfo={reviewInfo}
                 selected={null}
                 searchQuery=""
-                focusId={null}
                 lens="activity"
                 collapsedDirs={EMPTY_SET}
                 expandedFiles={EMPTY_SET}
@@ -3066,14 +3572,17 @@ export function App() {
           onDismiss={dismissBriefing}
         />
       )}
+      {/*
+        Toasts, top-right under the bar, and nothing else.
+
+        The risky-change queue used to share this corner and now lives in the
+        top bar as a chip — see RiskAlerts. What is left is transient and has
+        no controls, which is what lets the whole stack be click-through: a
+        receipt for something you just did must never be able to eat the next
+        thing you click, whatever it happens to be floating over.
+      */}
       <div className="corner-stack">
         <Toasts />
-        <RiskAlerts
-          alerts={alerts}
-          onReview={reviewAlert}
-          onDismiss={dismissAlert}
-          onDismissAll={dismissAllAlerts}
-        />
       </div>
     </div>
   );

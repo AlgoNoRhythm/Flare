@@ -38,6 +38,12 @@ export interface Task {
   position: number;
   /** progress log — appended by you or by an agent over MCP */
   notes: TaskNote[];
+  /**
+   * Saved with unfinished text. A draft is shown on the board and kept, but
+   * it is never handed to an agent and never counts as workable — it is a
+   * note to yourself that has not become a brief yet.
+   */
+  draft?: boolean;
 }
 
 export type DecisionStatus = 'proposed' | 'agreed' | 'declined';
@@ -394,7 +400,7 @@ export function createTask(board: Board, input: NewTask, now = Date.now()): { bo
 export function updateTask(
   board: Board,
   id: string,
-  patch: Partial<Pick<Task, 'title' | 'brief' | 'paths' | 'laneId'>>,
+  patch: Partial<Pick<Task, 'title' | 'brief' | 'paths' | 'laneId' | 'draft'>>,
   now = Date.now(),
 ): Board {
   return {
@@ -660,6 +666,7 @@ export function claimedTasks(board: Board): Task[] {
       t.laneId !== doneLane &&
       t.laneId !== reviewLane &&
       t.laneId !== queueLane &&
+      !t.draft &&
       !blockedIds.has(t.id),
   );
 }
@@ -669,7 +676,8 @@ export function nextStep(board: Board): NextStep {
   const doneLane = board.lanes[board.lanes.length - 1]?.id;
   const reviewLane = board.lanes.length >= 2 ? board.lanes[board.lanes.length - 2]?.id : undefined;
   const queueLane = board.lanes[0]?.id;
-  const live = board.tasks.filter((t) => t.laneId !== doneLane && t.laneId !== reviewLane);
+  // a draft is a note to its author, not a card for an agent
+  const live = board.tasks.filter((t) => t.laneId !== doneLane && t.laneId !== reviewLane && !t.draft);
   const workable = live.filter((t) => !blockedIds.has(t.id));
   const queued = workable.filter((t) => t.laneId === queueLane);
   const claimed = claimedTasks(board);

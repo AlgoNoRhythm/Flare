@@ -1,4 +1,5 @@
 import { LENSES, lensHue, ramp, type Lens } from '../graph/lenses';
+import { IconFoldAll, IconUnfoldAll } from './icons';
 
 interface Props {
   lens: Lens;
@@ -12,6 +13,9 @@ interface Props {
   /** the folder chips are put away — the summary and the toggle stay */
   collapsed: boolean;
   onToggleCollapsed(): void;
+  /** which half renders: the lens scale, the folders bar, or (default) both.
+      The scale lives in the graph toolbar; the folders live in the sidebar. */
+  show?: 'reading' | 'folders' | 'both';
 }
 
 const RAMP_STOPS = [0, 0.25, 0.5, 0.75, 1];
@@ -32,6 +36,7 @@ export function LensLegend({
   onUnfoldAll,
   collapsed,
   onToggleCollapsed,
+  show = 'both',
 }: Props) {
   const def = LENSES.find((l) => l.id === lens) ?? LENSES[0];
   const foldable = clusters.filter((c) => c.name !== '(root)' && c.count >= 2);
@@ -39,6 +44,7 @@ export function LensLegend({
 
   return (
     <>
+      {show !== 'folders' && (
       <div className={`lens-reading${emptyNote ? ' quiet' : ''}`} data-testid="lens-reading">
         <span className="lens-reading-name">{def.label}</span>
         {/*
@@ -86,8 +92,9 @@ export function LensLegend({
           </span>
         )}
       </div>
+      )}
 
-      {clusters.length > 0 && (
+      {show !== 'reading' && clusters.length > 0 && (
         <div className={`legend${collapsed ? ' folded-away' : ''}`} data-testid="legend">
           {/*
             A repo with thirty top-level folders puts thirty chips across the
@@ -121,7 +128,7 @@ export function LensLegend({
                 disabled={folded === foldable.length}
                 data-testid="legend-fold-all"
               >
-                ▣ Fold all
+                <IconFoldAll size={11} /> Fold all
               </button>
               <button
                 className="legend-act"
@@ -130,7 +137,7 @@ export function LensLegend({
                 disabled={folded === 0}
                 data-testid="legend-unfold-all"
               >
-                ▢ Unfold all
+                <IconUnfoldAll size={11} /> Unfold all
               </button>
             </span>
           )}

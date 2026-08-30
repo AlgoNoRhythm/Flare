@@ -28,6 +28,20 @@ async function readStats(): Promise<{ nodes: number; edges: number }> {
   return { nodes: Number(m?.[1] ?? -1), edges: Number(m?.[2] ?? -1) };
 }
 
+/*
+ * The lens and view switchers live in dropdown menus at the canvas's top
+ * right now — picking one is open-the-menu, then the same testid as before.
+ */
+async function pickLens(id: string) {
+  await page.getByTestId('lens-menu').click();
+  await page.getByTestId(`lens-${id}`).click();
+}
+
+async function pickView(id: string) {
+  await page.getByTestId('view-menu').click();
+  await page.getByTestId(`view-${id}`).click();
+}
+
 test.beforeAll(async () => {
   fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-proj-'));
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-e2e-data-'));
@@ -259,14 +273,15 @@ test('terminal and command log are one tab group, switchable in both directions'
   await expect(body).toBeVisible();
 });
 
-test('connect hint gives the endpoint and the setup for all three agents', async () => {
+test('connect dialog gives the setup for all three agents, and the line to open with', async () => {
   await page.getByTestId('mcp-connect-toggle').click();
   const url = (await page.getByTestId('mcp-url').textContent()) ?? '';
   // the project-scoped path is the one that keeps working with several windows
   expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\//);
 
-  // Claude Code is a command; the other two are config files, in different
-  // formats and different places, and guessing either is worse than no help
+  // ---- step 1: Claude Code is a command; the other two are config files, in
+  // different formats and different places, and guessing either is worse than
+  // no help
   await expect(page.getByTestId('mcp-snippet')).toContainText('claude mcp add --transport http');
   await page.getByTestId('mcp-target-codex').click();
   await expect(page.getByTestId('mcp-snippet')).toContainText('[mcp_servers.flare]');
@@ -275,33 +290,42 @@ test('connect hint gives the endpoint and the setup for all three agents', async
   await expect(page.getByTestId('mcp-snippet')).toContainText('"type": "remote"');
   await expect(page.getByTestId('mcp-snippet')).toContainText(url);
 
+  /*
+   * ---- step 2: the part registering the server does not do.
+   *
+   * Attaching the tools does not make an agent read them, and everything this
+   * project expects lives behind one call. So the dialog carries the sentence
+   * that starts it, with the endpoint in it.
+   */
+  const prompt = page.getByTestId('mcp-prompt');
+  await expect(prompt).toContainText(url);
+  await expect(prompt).toContainText('working_agreement');
+
   await page.getByTestId('mcp-copy-url').click();
   await expect.poll(() => page.evaluate(() => window.flare!.invoke('clipboard:read', []) as Promise<string>)).toBe(url);
 
-  // Copying is the last thing anyone does here and pasting is the next, so the
-  // panel gets out of the way rather than sitting on top of the terminal.
+  // the snippet copies without dismissing: you have not done the second step yet
   await page.getByTestId('mcp-copy-snippet').click();
-  await expect(page.getByTestId('mcp-connect')).toBeHidden();
-
-  // Escape closes it too, and the panel is bounded so it can never take the
-  // whole terminal panel with nothing left to paste into
-  await page.getByTestId('mcp-connect-toggle').click();
   await expect(page.getByTestId('mcp-connect')).toBeVisible();
-  const room = await page.evaluate(() => {
-    const panel = document.querySelector('[data-testid="terminal-panel"]')!;
-    const connect = document.querySelector('[data-testid="mcp-connect"]')!;
-    return {
-      ratio: connect.getBoundingClientRect().height / panel.getBoundingClientRect().height,
-      scrollable: getComputedStyle(connect).overflowY,
-    };
-  });
-  expect(room.ratio).toBeLessThanOrEqual(0.55);
-  expect(room.scrollable).toBe('auto');
+  expect(
+    await page.evaluate(() => window.flare!.invoke('clipboard:read', []) as Promise<string>),
+  ).toContain('"type": "remote"');
 
+  // Escape gets it out of the way, and hands the terminal back for the paste
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('mcp-connect')).toBeHidden();
-  // and the terminal has the focus back, ready for the paste
   await expect(page.locator('.terminal-body .xterm-helper-textarea').first()).toBeFocused();
+
+  // and the opening line is the one action that copies *and* closes, because
+  // pasting it is the very next thing you do
+  await page.getByTestId('mcp-connect-toggle').click();
+  await page.getByTestId('mcp-copy-prompt').click();
+  await expect(page.getByTestId('mcp-connect')).toBeHidden();
+  const copied = await page.evaluate(
+    () => window.flare!.invoke('clipboard:read', []) as Promise<string>,
+  );
+  expect(copied).toContain(url);
+  expect(copied).toContain('working_agreement');
 });
 
 test('markdown and images render, with the source one click away', async () => {
@@ -367,10 +391,10 @@ test('markdown and images render, with the source one click away', async () => {
 test('lenses and layout controls switch without breaking the graph', async () => {
   await page.getByTestId('tab-graph').click();
   const before = await readStats();
-  await page.getByTestId('lens-hotspot').click();
+  await pickLens('hotspot');
   await expect(page.getByTestId('lens-hotspot')).toHaveClass(/active/);
-  await page.getByTestId('lens-tests').click();
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('tests');
+  await pickLens('clusters');
   await page.getByTestId('layout-reset').click();
   await page.waitForTimeout(400);
   await expect(page.getByTestId('graph-container')).toBeVisible();
@@ -384,7 +408,7 @@ test('canvas, wheel and districts views all render the same graph', async () => 
   await expect(page.getByTestId('view-canvas')).toHaveClass(/active/);
   await expect(page.getByTestId('gcard-src/app.ts')).toBeVisible();
 
-  await page.getByTestId('view-wheel').click();
+  await pickView('wheel');
   await expect(page.getByTestId('view-wheel')).toHaveClass(/active/);
   await expect(page.locator('.wnode').first()).toBeVisible();
   await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
@@ -392,11 +416,11 @@ test('canvas, wheel and districts views all render the same graph', async () => 
   await page.locator('[data-testid="wnode-src/app.ts"] .dot').click();
   await expect(page.getByTestId('details-panel')).toContainText('src/app.ts');
 
-  await page.getByTestId('view-districts').click();
+  await pickView('districts');
   await expect(page.getByTestId('view-districts')).toHaveClass(/active/);
   await expect(page.getByTestId('dtile-src/app.ts')).toBeVisible();
 
-  await page.getByTestId('view-canvas').click();
+  await pickView('canvas');
   await expect(page.getByTestId('gcard-src/app.ts')).toBeVisible();
   await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
 });
@@ -411,7 +435,7 @@ test('the view explains itself: lens reading, zoom readout, centre, cheat sheet'
    * and would pass whether or not any of this is visible, which is how a test
    * goes on looking green after it has stopped testing anything.
    */
-  await page.getByTestId('lens-risk').click();
+  await pickLens('risk');
   await expect(page.getByTestId('lens-reading')).toContainText('Risk', { useInnerText: true });
   await expect(page.getByTestId('lens-reading')).not.toContainText('blast radius', {
     useInnerText: true,
@@ -425,7 +449,7 @@ test('the view explains itself: lens reading, zoom readout, centre, cheat sheet'
   await page.getByTestId('lens-scale').hover();
   await expect(page.locator('.lens-info-pop')).toBeHidden();
 
-  await page.getByTestId('lens-instability').click();
+  await pickLens('instability');
   await page.getByTestId('lens-info').hover();
   await expect(page.locator('.lens-info-pop')).toContainText('foundations');
 
@@ -434,11 +458,11 @@ test('the view explains itself: lens reading, zoom readout, centre, cheat sheet'
    * explanation of the lens — it is a fact about this repo, and the reason
    * there is no scale beside it, so hiding it would leave an empty legend.
    */
-  await page.getByTestId('lens-tests').click();
+  await pickLens('tests');
   await expect(page.getByTestId('lens-reading')).toContainText('No test imports any file', {
     useInnerText: true,
   });
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('clusters');
 
   // zoom controls report where they landed
   const readout = page.getByTestId('zoom-readout');
@@ -475,7 +499,7 @@ test('menu bar drives the app: submenu picks a lens, View switches tabs', async 
   await page.getByTestId('menu-item-lens-hotspot').click();
   await expect(page.getByTestId('lens-hotspot')).toHaveClass(/active/);
   await expect(page.getByTestId('menu-panel-graph')).toBeHidden();
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('clusters');
 
   // View > Insights switches the tab
   await page.getByTestId('menu-view').click();
@@ -488,14 +512,14 @@ test('a lens with nothing to colour says so instead of going blank', async () =>
   await page.getByTestId('tab-graph').click();
   // the fixture has no import cycles, so the graph would otherwise be a
   // uniform grey that reads as a broken lens
-  await page.getByTestId('lens-cycles').click();
+  await pickLens('cycles');
   await expect(page.getByTestId('lens-reading')).toContainText('No import cycles');
   await expect(page.getByTestId('lens-scale')).toHaveCount(0);
 
   // …and one that does have something to say keeps its scale
-  await page.getByTestId('lens-risk').click();
+  await pickLens('risk');
   await expect(page.getByTestId('lens-scale')).toBeVisible();
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('clusters');
 });
 
 test('explorer opens a terminal in the folder you right-clicked', async () => {
@@ -734,14 +758,15 @@ test('ingests lcov coverage: lens appears live and details show percentages', as
     'coverage/lcov.info',
     'SF:src/util.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:src/app.ts\nLF:4\nLH:4\nend_of_record\n',
   );
-  // the dedicated lcov watcher picks it up without a restart
-  await expect(page.getByTestId('lens-coverage')).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId('lens-coverage').click();
+  // the dedicated lcov watcher picks it up without a restart. The option
+  // lives in the Lens menu now, so "appears" means it joins the menu.
+  await expect(page.getByTestId('lens-coverage')).toHaveCount(1, { timeout: 15_000 });
+  await pickLens('coverage');
   await page.getByTestId('search-input').fill('util.ts');
   await page.getByTestId('search-input').press('Enter');
   await page.getByTestId('search-input').fill('');
   await expect(page.getByTestId('coverage-row')).toContainText('50% (1/2 lines)');
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('clusters');
 });
 
 test('insights: unified metrics table, issue feed, live todo-debt alert', async () => {
@@ -824,8 +849,9 @@ test('review cockpit: burst evidence, smells, tiering and walkthrough', async ()
   await page.getByTestId('walk-exit').click();
   await expect(page.getByTestId('walkbar')).toBeHidden();
 
-  // opening a file is what clears "unread" — approving alone is only a claim
-  await expect(page.getByTestId('lens-unread')).toBeVisible();
+  // opening a file is what clears "unread" — approving alone is only a claim.
+  // The option sits in the Lens menu, so present-in-the-menu is the check.
+  await expect(page.getByTestId('lens-unread')).toHaveCount(1);
   await page.getByTestId('btn-approve-all').click();
   await page.getByTestId('tab-graph').click();
 });
@@ -1216,6 +1242,101 @@ test('the heartbeat installs a stop hook and answers it from the board', async (
   await page.getByTestId('tab-graph').click();
 });
 
+/**
+ * Two agents in one repo, coordinating in the room.
+ *
+ * The whole feature rests on a chain no unit test can span end to end: two MCP
+ * sessions become two *named* agents, what one of them says lands in the panel
+ * a human is looking at, and the second one is told about it when it goes for
+ * the same file. Nothing is blocked anywhere along that chain — the point is
+ * that the crossing is *visible*, not that it is prevented.
+ */
+test('two agents coordinate in the channel, and the panel shows who is where', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  /** Open a session the way a real client does, and keep its id. */
+  const connect = async (client: string): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: client, version: '1' } },
+      }),
+    });
+    await res.json();
+    return res.headers.get('mcp-session-id') ?? '';
+  };
+  const asAgent = async (
+    session: string,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-session-id': session },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
+    return json.result?.content?.[0]?.text ?? '';
+  };
+
+  const one = await connect('claude-code');
+  const two = await connect('codex');
+  expect(one).not.toBe(two);
+
+  // two sessions of two different tools get two names a person can say aloud
+  expect(await asAgent(one, 'chat_post', {
+    kind: 'taking',
+    paths: ['src/util.ts'],
+    text: 'splitting the date helpers out',
+  })).toContain('Claude 1');
+
+  // the second agent going for the same file is told who is in it — and is not
+  // stopped, because there is no lock here to stop it with
+  const answer = await asAgent(two, 'chat_post', {
+    kind: 'taking',
+    paths: ['src/util.ts'],
+    text: 'need the same file for the parser fix',
+  });
+  expect(answer).toContain('Codex 1');
+  expect(answer).toContain('HEADS UP');
+  expect(answer).toContain('Claude 1');
+
+  // ---- and all of it is on screen, without a reload
+  await page.getByTestId('tab-channel').click();
+  const room = page.getByTestId('channel-panel');
+  await expect(page.getByTestId('channel-feed')).toContainText('splitting the date helpers out');
+  await expect(page.getByTestId('channel-roster')).toContainText('Claude 1');
+  await expect(page.getByTestId('channel-roster')).toContainText('Codex 1');
+  // the one thing neither agent can see for itself: both of them heading for
+  // the same file, before either has written anything
+  await expect(page.getByTestId('channel-clash')).toContainText('src/util.ts');
+
+  // the filters narrow the transcript to one voice
+  await page.getByTestId('channel-filter-mcp:' + one).click();
+  await expect(page.getByTestId('channel-feed')).not.toContainText('need the same file');
+  await page.getByTestId('channel-filter-all').click();
+  await expect(page.getByTestId('channel-feed')).toContainText('need the same file');
+
+  // the human is in the same room on the same terms, and the agents read it
+  await page.getByTestId('chat-input').fill('leave src/util.ts to Claude 1 please');
+  await page.getByTestId('chat-send').click();
+  await expect(page.getByTestId('channel-feed')).toContainText('leave src/util.ts to Claude 1');
+  expect(await asAgent(two, 'chat_read')).toContain('leave src/util.ts to Claude 1');
+
+  // handing it back clears the mark, and only its own owner can do that
+  expect(await asAgent(two, 'chat_post', { kind: 'done', paths: ['src/util.ts'], text: 'all yours' })).toContain(
+    'posted as Codex 1',
+  );
+  await expect(page.getByTestId('channel-clash')).toHaveCount(0);
+  await expect(room).toContainText('Claude 1');
+
+  await page.getByTestId('tab-graph').click();
+});
+
 test('MCP server answers graph queries over HTTP', async () => {
   const url = 'http://127.0.0.1:7411/mcp';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1462,10 +1583,10 @@ test('reuse: the metric, the lens and the blockers agree with each other', async
   await expect(page.getByTestId('reuse-score')).toContainText('self-contained');
 
   // the lens exists and says how to read itself, behind its ⓘ
-  await page.getByTestId('lens-reuse').click();
+  await pickLens('reuse');
   await page.getByTestId('lens-info').hover();
   await expect(page.locator('.lens-info-pop')).toContainText('come out as a package');
-  await page.getByTestId('lens-clusters').click();
+  await pickLens('clusters');
 });
 
 test('a file welded to the host scores low and names what welds it', async () => {
@@ -1865,9 +1986,24 @@ test('opening another project offers a second window rather than assuming', asyn
 
 test('risky changes queue as alerts that wait to be reviewed or dismissed', async () => {
   await page.getByTestId('tab-graph').click();
-  // clear whatever earlier tests left queued, so this starts from nothing
+  /*
+   * The queue is a chip in the top bar, and the cards are one click under it.
+   *
+   * It used to be a stack of cards floating in a corner, and there is no
+   * corner for one: the bottom-right is the terminal, the top-right is where
+   * every tab keeps its own controls. So the chip is what is always visible,
+   * and `open()` is what this test does before touching a card — the same
+   * gesture a person makes.
+   */
   const stack = page.getByTestId('risk-alerts');
-  if (await stack.isVisible()) await page.getByTestId('ra-dismiss-all').click();
+  const open = async (): Promise<void> => {
+    if ((await page.locator('.ra-pop').count()) === 0) await page.getByTestId('ra-chip').click();
+  };
+  // clear whatever earlier tests left queued, so this starts from nothing
+  if (await stack.isVisible()) {
+    await open();
+    await page.getByTestId('ra-dismiss-all').click();
+  }
   await expect(stack).toHaveCount(0);
 
   // two modules the rest of src/ depends on: the shape of change that is worth
@@ -1887,6 +2023,11 @@ test('risky changes queue as alerts that wait to be reviewed or dismissed', asyn
     `import { core } from './core';\nimport { base } from './base';\n\nexport function util() {\n  return 1 + core + base;\n}\n`,
   );
 
+  // the chip carries the count; the cards are behind it
+  await expect(stack).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('ra-chip')).toContainText('3');
+  await open();
+
   // the queue names the file and says what makes it risky, in the same words
   // the review rows use
   const card = page.getByTestId('ra-card-src/core.ts');
@@ -1896,7 +2037,7 @@ test('risky changes queue as alerts that wait to be reviewed or dismissed', asyn
   // util.ts is in there too — this edit made it depend on both new modules
   // while the rest of src/ still depends on it
   await expect(page.getByTestId('ra-card-src/util.ts')).toBeVisible();
-  await expect(stack).toContainText('3 risky changes');
+  await expect(page.locator('.ra-pop')).toContainText('3 risky changes');
   // app.ts changed as much as any of them, and nothing imports it
   await expect(page.getByTestId('ra-card-src/app.ts')).toHaveCount(0);
 
@@ -1913,10 +2054,13 @@ test('risky changes queue as alerts that wait to be reviewed or dismissed', asyn
   await expect(diff).toBeVisible();
   await expect(diff.locator('.line-insert').first()).toBeVisible({ timeout: 15_000 });
   await expect(card).toHaveCount(0);
-  await expect(stack).toContainText('2 risky changes');
+  // answering a card closes the popover and takes you to the change, so the
+  // count is read off the chip
+  await expect(page.getByTestId('ra-chip')).toContainText('2');
 
   // dismissing is not approving: the card goes, the review queue does not
   const flagged = await page.getByTestId('unreviewed-badge').textContent();
+  await open();
   await page.getByTestId('ra-dismiss-src/base.ts').click();
   await expect(page.getByTestId('ra-card-src/base.ts')).toHaveCount(0);
   await expect(page.getByTestId('unreviewed-badge')).toHaveText(flagged ?? '');
@@ -2074,4 +2218,137 @@ test('a rendered document follows the file, and the images it embeds', async () 
     .not.toBe(firstSrc);
 
   await page.getByTestId('tab-graph').click();
+});
+
+/**
+ * The session as the agent tells it, checked against what Flare watched.
+ *
+ * The chain no unit test can span: an agent announces work, writes files,
+ * writes the session down over MCP — and the reply it gets back names the
+ * three ways its story and the session disagree, while the same story lands
+ * at the top of the review panel over the diff it is about.
+ */
+test('an agent writes the session down, and Flare checks it against the writes', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  const connect = async (): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: 'claude-code' } },
+      }),
+    });
+    await res.json();
+    return res.headers.get('mcp-session-id') ?? '';
+  };
+  const asAgent = async (session: string, name: string, args: Record<string, unknown>): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-session-id': session },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
+    return json.result?.content?.[0]?.text ?? '';
+  };
+
+  const agent = await connect();
+  // announcing is what puts this agent's name on the writes that follow
+  await asAgent(agent, 'chat_post', {
+    kind: 'taking',
+    paths: ['src/core.ts'],
+    text: 'pulling the shared constant out into its own module',
+  });
+  write('src/core.ts', `export const core = 7;
+`);
+  // the burst only closes once the shadow snapshot lands behind it, and the
+  // audit below reads the attributed write — so wait for the attribution
+  // itself rather than a fixed pause that a loaded machine outlasts
+  await expect(page.getByTestId('unreviewed-badge')).toBeVisible({ timeout: 15_000 });
+  await expect
+    .poll(() => asAgent(agent, 'recent_activity', {}), { timeout: 20_000 })
+    .toMatch(/src\/core\.ts[^\n]*\(by claude/);
+
+  const reply = await asAgent(agent, 'session_summary', {
+    headline: 'Pulled the shared constant into its own module',
+    chapters: [
+      {
+        title: 'core.ts holds the constant now',
+        detail: 'Two callers were each declaring it, so changing it meant changing it twice.',
+        paths: ['src/core.ts', 'src/nowhere.ts'],
+        outcome: 'done',
+      },
+    ],
+  });
+
+  // the reply is written to be acted on: it names what the story got wrong
+  expect(reply).toContain('recorded');
+  expect(reply).toContain('src/nowhere.ts');
+  expect(reply).toMatch(/never changed/);
+
+  // and the same story is on screen, over the diff it is about
+  await page.getByTestId('tab-review').click();
+  const story = page.getByTestId('session-story');
+  await expect(story).toBeVisible();
+  await expect(story).toContainText('Pulled the shared constant into its own module');
+  await expect(story).toContainText('Two callers were each declaring it');
+  // a file the prose named and never touched is struck through rather than dropped
+  await expect(story.locator('.story-absent')).toContainText('src/nowhere.ts');
+
+  await page.getByTestId('tab-graph').click();
+});
+
+/**
+ * Find in files: the palette's Text mode, the top bar's way into it, and
+ * replace-all one confirmation away. Search is a solved problem, so this
+ * checks the shape people expect — matches grouped by file, Enter opens the
+ * match at its line, and nothing is replaced without being asked twice.
+ */
+test('find in files: matches open at their line, and replace-all is one confirmation away', async () => {
+  await page.getByTestId('tab-graph').click();
+  write('src/needle.ts', ['export const needle = 1;', '// a needle in the comment too', ''].join('\n'));
+  await page.getByTestId('explorer-refresh').click();
+  await expect(page.getByTestId('tree-file-src/needle.ts')).toBeVisible({ timeout: 20_000 });
+
+  // the top bar suggests files as you type, and hands the query to text search
+  await page.getByTestId('search-input').click();
+  await page.getByTestId('search-input').fill('needle');
+  await expect(page.getByTestId('search-hints')).toContainText('src/needle.ts');
+  await page.getByTestId('search-hint-find').click();
+  await expect(page.getByTestId('palette')).toBeVisible();
+  await expect(page.getByTestId('palette-mode-search')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('palette-input')).toHaveValue('needle');
+  await expect(page.getByTestId('search-count')).toContainText('2 matches in 1 file');
+  // a file with several matches is one row until unfolded
+  await expect(page.getByTestId('search-file-src/needle.ts')).toContainText('2');
+  await expect(page.getByTestId('search-hit-src/needle.ts-2')).toHaveCount(0);
+  await page.getByTestId('search-file-src/needle.ts').click();
+  await expect(page.getByTestId('search-hit-src/needle.ts-2')).toContainText('needle in the comment');
+
+  // Enter opens the selected match at its line
+  await page.getByTestId('palette-input').press('Enter');
+  await expect(page.getByTestId('palette')).toBeHidden();
+  await expect(page.getByTestId('editor-src/needle.ts').locator('.view-lines')).toContainText(
+    'export const needle',
+  );
+
+  // replace-all, asked twice: once to open it, once to confirm it
+  await page.getByTestId('tab-graph').click();
+  await page.keyboard.press('Control+Shift+F');
+  await expect(page.getByTestId('palette-mode-search')).toHaveAttribute('aria-selected', 'true');
+  await page.getByTestId('palette-input').fill('needle');
+  await expect(page.getByTestId('search-count')).toContainText('2 matches');
+  await page.getByTestId('search-replace-toggle').click();
+  await page.getByTestId('search-replace-input').fill('pin');
+  await page.getByTestId('search-replace-all').click();
+  await page.getByTestId('search-replace-confirm').click();
+  await expect(page.getByTestId('search-count')).toContainText('replaced 2 in 1 file');
+  await expect
+    .poll(() => fs.readFileSync(path.join(fixture, 'src', 'needle.ts'), 'utf8'))
+    .toContain('const pin = 1');
+  await page.keyboard.press('Escape');
+  await page.getByTestId('search-input').fill('');
 });

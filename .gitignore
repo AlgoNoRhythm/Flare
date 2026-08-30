@@ -16,3 +16,5 @@ coverage/
 CLAUDE.md
 # icon renders for launches and listings — regenerate with npm run icon
 /brand/
+# design plans and brainstorms — local working notes, never pushed
+/plans/

@@ -13,7 +13,7 @@ interface Row {
 }
 
 const COMMON: Row[] = [
-  { keys: 'click', what: 'select a file — the details panel opens on the right' },
+  { keys: 'click', what: 'select a file — the inspector opens in the sidebar' },
   { keys: 'double-click', what: 'open it in the editor (a folder unfolds instead)' },
   { keys: 'ctrl + click', what: 'add to the selection (works like the file tree)' },
   { keys: 'right-click', what: 'rename, delete, copy paths in an agent-friendly tree' },
@@ -50,7 +50,7 @@ const GLOBAL: Row[] = [
   { keys: 'Ctrl + B', what: 'toggle the sidebar' },
   { keys: 'Ctrl 0 + −', what: 'fit the view, zoom in, zoom out' },
   { keys: 'Enter', what: 'in the search box: jump the graph to the first match' },
-  { keys: 'Esc', what: 'clear focus mode and collapse expanded symbols' },
+  { keys: 'Esc', what: 'collapse expanded symbols and drop the selection' },
   { keys: '?', what: 'open this cheat sheet' },
 ];
 
@@ -111,8 +111,8 @@ export function HelpOverlay({ view, onClose }: Props) {
           <Section title="Keyboard" rows={GLOBAL} />
         </div>
         <div className="help-foot">
-          The <b>colour</b> row picks the question you are asking; the <b>view</b> row picks how the answer
-          is drawn. Both stay in sync, so you can switch either without losing your place.
+          The <b>Lens</b> menu (top right) picks the question you are asking; the <b>View</b> menu picks how
+          the answer is drawn. Both stay in sync, so you can switch either without losing your place.
         </div>
       </div>
     </div>

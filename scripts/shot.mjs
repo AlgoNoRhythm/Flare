@@ -24,9 +24,11 @@ await page.waitForTimeout(2500);
 await page.screenshot({ path: path.join(outDir, 'v-collapsed.png') });
 
 // lens on the collapsed cluster view (aggregate coloring)
+await page.getByTestId('lens-menu').click();
 await page.getByTestId('lens-hotspot').click();
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(outDir, 'v-hotspot.png') });
+await page.getByTestId('lens-menu').click();
 await page.getByTestId('lens-clusters').click();
 
 // expand two clusters
@@ -46,6 +48,7 @@ await page.waitForTimeout(700);
 await page.screenshot({ path: path.join(outDir, 'v-selected.png') });
 
 // wheel view
+await page.getByTestId('view-menu').click();
 await page.getByTestId('view-wheel').click();
 await page.waitForTimeout(1200);
 await page.screenshot({ path: path.join(outDir, 'v-wheel.png') });
@@ -56,9 +59,12 @@ await page.waitForTimeout(600);
 await page.screenshot({ path: path.join(outDir, 'v-wheel-pinned.png') });
 
 // districts
+await page.getByTestId('view-menu').click();
 await page.getByTestId('view-districts').click();
 await page.waitForTimeout(1200);
 await page.screenshot({ path: path.join(outDir, 'v-districts.png') });
+
+await page.getByTestId('lens-menu').click();
 
 await page.getByTestId('lens-risk').click();
 await page.waitForTimeout(500);

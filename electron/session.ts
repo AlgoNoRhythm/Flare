@@ -1,5 +1,15 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import {
+  MAX_SEARCH_FILE_BYTES,
+  MAX_SEARCH_HITS,
+  compileQuery,
+  isSearchableFile,
+  replaceText,
+  searchText,
+  type SearchHit,
+  type SearchOptions,
+} from '../shared/search';
 import * as path from 'node:path';
 import { GraphBuilder } from '../shared/graph';
 import { buildIgnore, parseFileFromDisk, scanProject } from '../shared/scanner';
@@ -33,12 +43,20 @@ import {
 } from '../shared/tasks';
 import {
   attribute,
+  INTENT_TTL_MS,
   type Attributed,
   type LiveAgentInfo,
   type RecordedIntent,
   type TaskClaim,
 } from '../shared/attribution';
 import { changedRanges, type BurstEdit } from '../shared/conflicts';
+import { AgentRegistry, type AgentsSnapshot } from './services/roster';
+import {
+  auditSummary,
+  type Chapter,
+  type SessionSummary,
+  type SummaryAudit,
+} from '../shared/session';
 import type {
   ChangeEvent,
   CommandLogEntry,
@@ -70,6 +88,10 @@ export interface SessionEvents {
   onDangerousCommand: (command: CommandLogEntry) => void;
   /** The task board changed (by you, or by an agent over MCP). */
   onBoard: (board: Board) => void;
+  /** An agent arrived, went quiet, or claimed or released files. */
+  onAgents: (snapshot: AgentsSnapshot) => void;
+  /** An agent wrote down what it did this session. */
+  onSummaries: (summaries: SessionSummary[]) => void;
 }
 
 /** Writes closer together than this belong to the same burst. */
@@ -145,15 +167,25 @@ export class ProjectSession {
   private commandStarts = new Map<number, { terminalId: string; offset: number }>();
   private pendingIntent: BurstIntent | null = null;
   /**
-   * The agent that last announced an edit, and what to call it.
+   * What each agent announced it was about to do, one entry per MCP session.
    *
-   * `activeIntent` is the identity behind the most recent `record_intent`;
-   * `callerLabels` is what each MCP session named itself by claiming a card.
-   * Together they are what lets two agents editing the same file be told
-   * apart — the board alone cannot, because it attributes by path.
+   * Per session rather than one global "latest": with two agents running, a
+   * single slot means whichever of them called `record_intent` last owns every
+   * write for the next ten minutes, including the other's. Keeping them apart
+   * is what lets attribution say "several announced, and the claims separate
+   * them" instead of confidently naming the wrong one.
    */
-  private activeIntent: RecordedIntent | null = null;
+  private activeIntents = new Map<string, RecordedIntent>();
   private callerLabels = new Map<string, string>();
+  /**
+   * Who is connected over MCP, and the room they talk in.
+   *
+   * The identity layer everything multi-agent rests on: the roster turns a
+   * session id into "Claude 2", and the channel turns "I am taking these
+   * files" into something the other agents, the graph and the review can all
+   * read. See shared/roster.ts and shared/channel.ts.
+   */
+  readonly agents: AgentRegistry;
 
   constructor(
     root: string,
@@ -170,6 +202,13 @@ export class ProjectSession {
     this.loadCommandHistory();
     this.builder = new GraphBuilder(this.loadResolverOptions());
     this.fileTree = { name: path.basename(root), path: '', type: 'dir', children: [] };
+    this.agents = new AgentRegistry(
+      (snapshot) => {
+        if (!this.disposed) this.events.onAgents(snapshot);
+      },
+      () => [...new Set((this.attributionProvider?.().live ?? []).map((a) => a.agent))],
+    );
+    this.agents.start();
   }
 
   private loadResolverOptions(allFiles?: string[]): ResolverOptions {
@@ -285,7 +324,10 @@ export class ProjectSession {
    */
   private attributeWrite(paths: string[]): Attributed {
     const status = this.attributionProvider?.();
-    if (!status && !this.activeIntent) return { agent: 'you', basis: 'unknown' };
+    const working = this.agents.working();
+    if (!status && this.activeIntents.size === 0 && working.size === 0) {
+      return { agent: 'you', basis: 'unknown' };
+    }
     const claims: TaskClaim[] = claimedTasks(this.store.board).map((t) => ({
       id: t.id,
       title: t.title,
@@ -296,10 +338,15 @@ export class ProjectSession {
       paths,
       live: status?.live ?? [],
       claims,
-      // a label claimed after the intent was recorded still applies to it
-      intent: this.activeIntent
-        ? { ...this.activeIntent, label: this.callerLabels.get(this.activeIntent.id) ?? this.activeIntent.label }
-        : null,
+      working,
+      // a label or a name settled after the intent was recorded still applies
+      // to it: claiming a card, naming yourself and announcing an edit are
+      // three separate acts by one agent, in whatever order it makes them
+      intents: [...this.activeIntents.values()].map((intent) => ({
+        ...intent,
+        label: this.callerLabels.get(intent.id) ?? intent.label,
+        name: this.agents.get(intent.id)?.name ?? intent.name ?? null,
+      })),
     });
   }
 
@@ -312,7 +359,9 @@ export class ProjectSession {
    * the ring on the graph reads the same either way.
    */
   noteClaim(callerId: string | null, title: string): void {
-    if (callerId) this.callerLabels.set(callerId, title);
+    if (!callerId) return;
+    this.callerLabels.set(callerId, title);
+    this.agents.noteCall(callerId, { task: title });
   }
 
   private handleBatch(batch: { changed: string[]; removed: string[] }): void {
@@ -325,16 +374,23 @@ export class ProjectSession {
 
     const parsedChanges = [];
     let treeDirty = batch.removed.length > 0;
+    /* files this agent had not already written in this burst — the roster
+       counts files touched, not writes, so saving one file twice is one file */
+    let firstWrites = 0;
     for (const rel of batch.changed) {
       this.changedAt[rel] = now;
       this.knownFiles.add(rel);
       const parsed = parseFileFromDisk(this.root, rel);
       if (parsed) parsedChanges.push(parsed);
       this.trackFileState(states, rel, parsed, false);
-      if (!burst.changed.includes(rel)) burst.changed.push(rel);
+      if (!burst.changed.includes(rel)) {
+        burst.changed.push(rel);
+        firstWrites++;
+      }
       treeDirty = true;
       this.pendingSnapshotFiles.add(rel);
     }
+    this.agents.noteWrites(attributed.agentId, firstWrites);
     for (const rel of batch.removed) {
       this.changedAt[rel] = now;
       this.knownFiles.delete(rel);
@@ -419,6 +475,7 @@ export class ProjectSession {
       endedAt: now,
       agent,
       agentId: attributed.agentId,
+      agentName: attributed.agentName,
       agentLabel: attributed.agentLabel,
       changed: [],
       removed: [],
@@ -548,6 +605,56 @@ export class ProjectSession {
     return this.bursts;
   }
 
+  // ------------------------------------------------------------------
+  // what an agent says it did
+  // ------------------------------------------------------------------
+
+  /**
+   * One summary per author, newest kept.
+   *
+   * Per author rather than per session: with three agents there are three
+   * stories, each answerable only for its own writes. And the newest replaces
+   * the older one, because the usual reason an agent writes a second is that
+   * Flare's audit told it the first was wrong — keeping both would leave the
+   * corrected version sitting under the mistake it fixed.
+   */
+  private summaries: SessionSummary[] = [];
+
+  getSummaries(): SessionSummary[] {
+    return this.summaries;
+  }
+
+  /**
+   * Record what an agent says it did, and hand back what actually happened.
+   *
+   * The window is derived here rather than asked for: it runs from the
+   * author's first write of the session to its last, which is a fact Flare
+   * has and the agent would have to guess. A summary audited against the
+   * wrong window is worse than none.
+   */
+  recordSummary(
+    by: string,
+    byName: string,
+    headline: string,
+    chapters: Chapter[],
+  ): { summary: SessionSummary; audit: SummaryAudit } {
+    const now = Date.now();
+    const mine = this.bursts.filter((b) => (b.agentId ? b.agentId === by : b.agent === by));
+    const summary: SessionSummary = {
+      id: `s${now.toString(36)}`,
+      by,
+      byName,
+      at: now,
+      from: mine.length > 0 ? mine[0].startedAt : now,
+      to: now,
+      headline,
+      chapters,
+    };
+    this.summaries = [...this.summaries.filter((s) => s.by !== by), summary];
+    if (!this.disposed) this.events.onSummaries(this.summaries);
+    return { summary, audit: auditSummary(summary, this.bursts) };
+  }
+
   /**
    * Which lines each burst wrote, per file.
    *
@@ -668,12 +775,21 @@ export class ProjectSession {
     callerId?: string | null,
   ): void {
     if (callerId) {
-      this.activeIntent = {
+      const agent = this.agents.noteCall(callerId, { doing: goal });
+      this.activeIntents.set(callerId, {
         id: callerId,
         label: this.callerLabels.get(callerId) ?? null,
-        tool: this.attributionProvider?.().live[0]?.agent ?? null,
+        // the roster's answer first: it comes from what the client called
+        // itself, while the process list can only say what is running
+        tool: agent?.tool ?? this.attributionProvider?.().live[0]?.agent ?? null,
+        name: agent?.name ?? null,
         at: Date.now(),
-      };
+      });
+      // an intent that has lapsed is not evidence about anything, and holding
+      // one per session for a whole day is how this map becomes a leak
+      for (const [id, intent] of this.activeIntents) {
+        if (Date.now() - intent.at >= INTENT_TTL_MS) this.activeIntents.delete(id);
+      }
     }
     const intent: BurstIntent = { goal, ruledOut, at: Date.now(), source };
     const last = this.bursts[this.bursts.length - 1];
@@ -838,6 +954,81 @@ export class ProjectSession {
     }
   }
 
+  /**
+   * Find text across the project.
+   *
+   * Walks every scanned file — the same set the graph and the tree know, so
+   * .gitignore and the default ignores already apply — skipping obvious
+   * binaries by name and anything too large to be source. Synchronous reads
+   * on purpose: a project of a few thousand files answers in tens of
+   * milliseconds, and streaming results would be machinery for a delay
+   * nobody notices.
+   */
+  searchText(query: string, options: SearchOptions = {}): SearchHit[] {
+    const pattern = compileQuery(query, options);
+    if (!pattern) return [];
+    const hits: SearchHit[] = [];
+    for (const rel of [...this.knownFiles].sort()) {
+      if (!isSearchableFile(rel)) continue;
+      const abs = this.resolveInRoot(rel);
+      if (!abs) continue;
+      let text: string;
+      try {
+        if (fs.statSync(abs).size > MAX_SEARCH_FILE_BYTES) continue;
+        text = fs.readFileSync(abs, 'utf8');
+      } catch {
+        continue;
+      }
+      if (text.includes('\u0000')) continue;
+      for (const hit of searchText(rel, text, pattern)) {
+        hits.push(hit);
+        if (hits.length >= MAX_SEARCH_HITS) return hits;
+      }
+    }
+    return hits;
+  }
+
+  /**
+   * Replace across files — the same pattern the search used, applied to the
+   * files it hit (or the subset asked for). Every write goes through
+   * writeFile, so the watcher sees it like any other edit: it lands in the
+   * activity, the review and the local history the same way an agent's
+   * write would.
+   */
+  replaceText(
+    query: string,
+    replacement: string,
+    options: SearchOptions = {},
+    onlyPaths?: readonly string[],
+  ): { files: number; replacements: number } {
+    const pattern = compileQuery(query, options);
+    if (!pattern) return { files: 0, replacements: 0 };
+    const wanted = onlyPaths ? new Set(onlyPaths) : null;
+    let files = 0;
+    let replacements = 0;
+    for (const rel of this.knownFiles) {
+      if (wanted && !wanted.has(rel)) continue;
+      if (!isSearchableFile(rel)) continue;
+      const abs = this.resolveInRoot(rel);
+      if (!abs) continue;
+      let text: string;
+      try {
+        if (fs.statSync(abs).size > MAX_SEARCH_FILE_BYTES) continue;
+        text = fs.readFileSync(abs, 'utf8');
+      } catch {
+        continue;
+      }
+      if (text.includes('\u0000')) continue;
+      const result = replaceText(text, pattern, replacement);
+      if (result.count === 0) continue;
+      if (this.writeFile(rel, result.text)) {
+        files++;
+        replacements += result.count;
+      }
+    }
+    return { files, replacements };
+  }
+
   private loadCoverage(): void {
     for (const candidate of LCOV_CANDIDATES) {
       try {
@@ -1000,6 +1191,7 @@ export class ProjectSession {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.agents.stop();
     if (this.gitTimer) clearTimeout(this.gitTimer);
     if (this.shadowTimer) clearTimeout(this.shadowTimer);
     this.store.saveNow();

@@ -15,6 +15,7 @@ import { api } from '../api';
 import { STATUS, makeClusterColors } from '../theme';
 import { agentColor, type Lens } from '../graph/lenses';
 import { conflictMarks, type Conflict } from '../../shared/conflicts';
+import { noticesUnder, type Notice } from '../../shared/channel';
 import { aggregateLens, buildLensContext, lensColor, lensValue, type LensContext } from '../graph/lensColor';
 import {
   deriveRenderModel,
@@ -68,7 +69,6 @@ export interface CanvasProps {
   selected: string | null;
   selectedPaths: ReadonlySet<string>;
   searchQuery: string;
-  focusId: string | null;
   lens: Lens;
   collapsedDirs: ReadonlySet<string>;
   expandedFiles: ReadonlySet<string>;
@@ -84,6 +84,17 @@ export interface CanvasProps {
    * that survives a forty-file night.
    */
   conflicts?: readonly Conflict[];
+  /**
+   * Files an agent has told the channel it is working on.
+   *
+   * The other agent marks on this canvas are all *retrospective* — who wrote
+   * this, who wrote it twice. This one is the only forward-looking mark on the
+   * graph: it says where work is about to happen, which is the moment a second
+   * agent still has a choice about where to go. A list, not one holder,
+   * because nothing here resolves — two agents may both have said it, and that
+   * is the case worth drawing loudest.
+   */
+  held?: ReadonlyMap<string, Notice[]>;
   onSelect(id: string | null): void;
   onToggleSelect(id: string): void;
   onBoxSelect(ids: string[]): void;
@@ -104,6 +115,10 @@ const FOLDER_W = 178;
 const FOLDER_H = 46;
 const SYM_W = 116;
 const SYM_H = 24;
+/** the symbol grid: gap between chips, offset from the card, plate padding */
+const SYM_GAP = 6;
+const SYM_OFFSET = 18;
+const PLATE_PAD = 10;
 /** below this scale a card can't show detail — switch to the overview skin */
 const FAR_ZOOM = 0.62;
 /**
@@ -125,6 +140,45 @@ function sizeOf(n: RenderNode): { w: number; h: number } {
   if (n.kind === 'symbol') return { w: SYM_W, h: SYM_H };
   if (n.kind === 'hub') return { w: CARD_W, h: CARD_H };
   return { w: CARD_W, h: CARD_H };
+}
+
+/**
+ * "Somebody said they are in here."
+ *
+ * A filled square in the speaker's colour, which is the same colour its writes
+ * get everywhere else in the app — so the mark on the card, the ring on the
+ * burst and the chip in the roster are visibly one agent without anything
+ * having to be read. Two agents having said it splits the square down the
+ * middle, exactly as a contested file does: same shape of trouble, one step
+ * earlier.
+ */
+function HeldMark({ notices, inside = false }: { notices: Notice[]; inside?: boolean }) {
+  const names = [...new Map(notices.map((n) => [n.agentId, n])).values()];
+  const clash = names.length > 1;
+  const first = agentColor(names[0].agentId);
+  return (
+    <span
+      className={`gb held${clash ? ' clash' : ''}`}
+      style={{
+        color: first,
+        borderColor: clash ? undefined : first,
+        ...(clash
+          ? { background: `linear-gradient(90deg, ${first} 0 50%, ${agentColor(names[1].agentId)} 50% 100%)` }
+          : {}),
+      }}
+      title={
+        clash
+          ? `${names.map((n) => n.agentName).join(' and ')} have BOTH said they are taking ${
+              inside ? 'something in here' : 'this file'
+            }. Nothing is blocked — whoever writes second wins.`
+          : `${names[0].agentName} said in the channel it is working on ${
+              inside ? 'a file in here' : 'this'
+            }${names[0].text ? ` — ${names[0].text}` : ''}`
+      }
+    >
+      ▣
+    </span>
+  );
 }
 
 function isUnreviewed(path: string, changedAt: Record<string, number>, review: ReviewInfo | null): boolean {
@@ -152,13 +206,13 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
     selected,
     selectedPaths,
     searchQuery,
-    focusId,
     lens,
     collapsedDirs,
     expandedFiles,
     symbolGraphs,
     recentChanges,
     conflicts,
+    held,
     onSelect,
     onToggleSelect,
     onBoxSelect,
@@ -300,23 +354,49 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
       };
       placed.set(n.id, { node: n, ...p, ...sizeOf(n) });
     }
-    // symbol chips ring around their hub
+    /*
+     * Symbol chips sit in a tight grid beside their hub — a per-file view,
+     * not a ring. They used to orbit the card at up to 230px, in a flow that
+     * leaves ~26px between columns, so an expanded file's symbols landed on
+     * top of (and under) its neighbours. The grid keeps them a glance from
+     * the card, and the plate drawn under them (see `plates`) lifts the whole
+     * group above the flow so nothing else shows through it.
+     */
+    const plates: { id: string; x: number; y: number; w: number; h: number }[] = [];
     for (const n of derived.nodes) {
       if (n.kind !== 'symbol' || !n.symbol) continue;
       const hub = placed.get(n.symbol.parent);
       const sg = symbolGraphs.get(n.symbol.parent);
-      const idx = sg?.symbols.findIndex((s) => s.name === n.symbol!.name) ?? 0;
+      const idx = Math.max(sg?.symbols.findIndex((s) => s.name === n.symbol!.name) ?? 0, 0);
       const count = Math.max(sg?.symbols.length ?? 1, 1);
       const override = overridesRef.current[n.id];
-      const angle = (idx / count) * Math.PI * 2 - Math.PI / 2;
-      const radius = 90 + count * 7;
+      const cols = count > 6 ? 2 : 1;
+      const rows = Math.ceil(count / cols);
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const stepX = SYM_W + SYM_GAP;
+      const stepY = SYM_H + SYM_GAP;
       const base = hub
         ? {
-            x: hub.x + CARD_W / 2 + Math.cos(angle) * radius - SYM_W / 2,
-            y: hub.y + CARD_H / 2 + Math.sin(angle) * radius * 0.62 - SYM_H / 2,
+            x: hub.x + CARD_W + SYM_OFFSET + col * stepX,
+            // the column is centred on the card, so a short list sits level
+            // with it and a long one grows evenly above and below
+            y: hub.y + CARD_H / 2 - (rows * stepY - SYM_GAP) / 2 + row * stepY,
           }
         : { x: 0, y: 0 };
       placed.set(n.id, { node: n, ...(override ?? base), ...sizeOf(n) });
+    }
+    for (const n of derived.nodes) {
+      if (n.kind !== 'hub') continue;
+      const hub = placed.get(n.id);
+      if (!hub) continue;
+      const members = [...placed.values()].filter((p) => p.node.kind === 'symbol' && p.node.symbol?.parent === n.id);
+      const xs = [hub, ...members];
+      const minX = Math.min(...xs.map((p) => p.x));
+      const minY = Math.min(...xs.map((p) => p.y));
+      const maxX = Math.max(...xs.map((p) => p.x + p.w));
+      const maxY = Math.max(...xs.map((p) => p.y + p.h));
+      plates.push({ id: n.id, x: minX - PLATE_PAD, y: minY - PLATE_PAD, w: maxX - minX + PLATE_PAD * 2, h: maxY - minY + PLATE_PAD * 2 });
     }
 
     const edges = derived.edges
@@ -343,7 +423,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
       const minY = Math.min(...members.map((m) => m.y));
       captions.push({ cluster, x: minX, y: minY - 26 });
     }
-    return { placed, edges, captions };
+    return { placed, edges, captions, plates };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, overridesVersion, symbolGraphs]);
 
@@ -981,20 +1061,6 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
   // ------------------------------------------------------------------
   // render helpers
   // ------------------------------------------------------------------
-  const focusSet = useMemo(() => {
-    if (!focusId || !model.placed.has(focusId)) return null;
-    const set = new Set<string>([focusId]);
-    for (const e of model.edges) {
-      if (e.source === focusId) set.add(e.target);
-      if (e.target === focusId) set.add(e.source);
-    }
-    for (const e of model.edges) {
-      if (set.has(e.source)) set.add(e.target);
-      else if (set.has(e.target)) set.add(e.source);
-    }
-    return set;
-  }, [focusId, model]);
-
   const query = searchQuery.trim().toLowerCase();
 
   const born = (id: string) => {
@@ -1095,6 +1161,14 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
           )}
         </svg>
 
+        {model.plates.map((pl) => (
+          <div
+            key={`plate:${pl.id}`}
+            className="symbol-plate"
+            style={{ left: pl.x, top: pl.y, width: pl.w, height: pl.h }}
+            aria-hidden="true"
+          />
+        ))}
         {model.captions.map((c) => (
           <div key={c.cluster} className="cluster-caption" style={{ left: c.x, top: c.y, color: clusterColorRef.current(c.cluster === '(root)' ? '' : c.cluster) }}>
             {c.cluster.toUpperCase()}
@@ -1122,10 +1196,17 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
           const fresh = unrev && now - (changedAt[n.id] ?? 0) < 90_000;
           const agent = changedBy[n.id];
           const contestedParties = contested.get(n.id);
-          const inFocus = !focusSet || focusSet.has(n.id);
+          /* a folder card stands in for what is inside it, notices included */
+          const spoken = held
+            ? n.kind === 'dir' && n.dir
+              ? noticesUnder(held, n.dir.dir)
+              : (held.get(n.id) ?? [])
+            : [];
+          const claim = spoken.length > 0;
           const miss = query !== '' && !n.id.toLowerCase().includes(query);
           const classes = [
             'gcard',
+            claim ? 'claimed' : '',
             n.kind === 'dir' ? 'folder' : '',
             n.kind === 'symbol' ? 'symbol' : '',
             n.kind === 'hub' ? 'hub' : '',
@@ -1134,7 +1215,6 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
             unrev ? 'unrev' : '',
             fresh ? 'pulse' : '',
             miss || (pathHl.current && !pathHl.current.nodes.has(n.id)) ? 'dimmed' : '',
-            !inFocus ? 'hiddenNode' : '',
             born(n.id) ? 'born' : '',
           ]
             .filter(Boolean)
@@ -1158,6 +1238,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                   height: p.h,
                   '--lens': color,
                   '--lens-intensity': intensity.toFixed(3),
+                  ...(claim ? { '--agent': agentColor(spoken[0].agentId) } : {}),
                 } as React.CSSProperties
               }
               onClick={(e) => onCardClick(e, n)}
@@ -1181,6 +1262,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                     </span>
                   </span>
                   <span className="gbadges">
+                    {claim && <HeldMark notices={spoken} inside />}
                     {n.dir.untested > 0 && <span className="gb crit">{n.dir.untested}∅t</span>}
                     {n.dir.cycles > 0 && <span className="gb crit">∞</span>}
                   </span>
@@ -1193,6 +1275,10 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                 <>
                   <span className="gname">{n.label}</span>
                   <span className="gbadges">
+                    {/* who is *in* this file right now, ahead of every badge
+                        that says what happened to it — the only mark here that
+                        is about the next few minutes rather than the last few */}
+                    {claim && <HeldMark notices={spoken} />}
                     {/*
                       One dot, two states. Normally it is who changed this
                       file; when two agents both wrote it the same dot splits

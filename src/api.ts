@@ -3,6 +3,10 @@ import type { ChangeBurst } from '../shared/activity';
 import type { BurstEdit } from '../shared/conflicts';
 import type { Board } from '../shared/tasks';
 import type { UiState } from '../electron/services/store';
+import type { AgentsSnapshot } from '../electron/services/roster';
+import type { PostKind } from '../shared/channel';
+import type { SessionSummary } from '../shared/session';
+import type { SearchHit, SearchOptions } from '../shared/search';
 import type { RecentEntry, SessionRedirect } from '../electron/core';
 import { createWebTransport } from './webTransport';
 import type {
@@ -42,6 +46,15 @@ export interface FlareApi {
   readFile(rel: string): Promise<string | null>;
   readFileDataUrl(rel: string): Promise<string | null>;
   writeFile(rel: string, content: string): Promise<boolean>;
+  /** find text across every scanned file — see shared/search */
+  searchText(query: string, options?: SearchOptions): Promise<SearchHit[]>;
+  /** replace across the files the same query hits, or just `paths` */
+  searchReplace(
+    query: string,
+    replacement: string,
+    options?: SearchOptions,
+    paths?: string[],
+  ): Promise<{ files: number; replacements: number }>;
   createFile(rel: string): Promise<boolean>;
   createDir(rel: string): Promise<boolean>;
   rescan(): Promise<void>;
@@ -74,6 +87,17 @@ export interface FlareApi {
   /** which lines each burst wrote — what lets a conflict say "12 of 14 lines" */
   activityEdits(): Promise<BurstEdit[]>;
   markRead(paths: string[]): Promise<boolean>;
+  /** who is connected over MCP, and what they have said to each other */
+  agentsGet(): Promise<AgentsSnapshot>;
+  /** what each agent says it did this session */
+  summariesGet(): Promise<SessionSummary[]>;
+  /** post into the same channel the agents coordinate in */
+  agentsSay(input: {
+    text: string;
+    kind?: PostKind;
+    paths?: string[];
+    to?: string | null;
+  }): Promise<boolean>;
   boardGet(): Promise<Board | null>;
   boardSet(board: Board): Promise<boolean>;
   boardFormat(taskId: string): Promise<string | null>;
@@ -215,6 +239,9 @@ export function createApi(t: FlareTransport): FlareApi {
     readFile: (rel) => call('file:read', rel),
     readFileDataUrl: (rel) => call('file:readDataUrl', rel),
     writeFile: (rel, content) => call('file:write', rel, content),
+    searchText: (query, options) => call('search:text', query, options ?? {}),
+    searchReplace: (query, replacement, options, paths) =>
+      call('search:replace', query, replacement, options ?? {}, paths),
     createFile: (rel) => call('file:create', rel),
     createDir: (rel) => call('dir:create', rel),
     rescan: () => call('project:rescan'),
@@ -236,6 +263,9 @@ export function createApi(t: FlareTransport): FlareApi {
     activityLastGreen: () => call('activity:lastGreen'),
     activityEdits: () => call('activity:edits'),
     markRead: (paths) => call('review:markRead', paths),
+    agentsGet: () => call('agents:get'),
+    summariesGet: () => call('summaries:get'),
+    agentsSay: (input) => call('agents:say', input),
     boardGet: () => call('board:get'),
     boardSet: (board) => call('board:set', board),
     boardFormat: (taskId) => call('board:format', taskId),
@@ -318,4 +348,5 @@ export const api: FlareApi = createApi(window.flare ?? createWebTransport());
  */
 export const isDesktop = window.flare?.kind === 'desktop';
 
+export type { AgentsSnapshot };
 export type { ChangeEvent, FileTreeNode, GitStatus, GraphPatch, NodeDetails, ProjectInfo, ShadowSnapshot };

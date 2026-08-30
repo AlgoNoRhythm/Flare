@@ -104,8 +104,13 @@ function reuseColor(value: number | null): string | undefined {
   return value >= 70 ? UI_STATUS.good : value >= 40 ? UI_STATUS.warning : UI_STATUS.critical;
 }
 
+/*
+ * Colour is reserved for the top band. At the old >=40 threshold most of the
+ * table qualified as "warning", and 169 rows × 7 columns of amber is not a
+ * warning, it is wallpaper — the bars alone carry the ranking below that.
+ */
 function scoreColor(value: number): string {
-  return value >= 70 ? UI_STATUS.critical : value >= 40 ? UI_STATUS.warning : INK.muted;
+  return value >= 70 ? UI_STATUS.critical : value >= 55 ? UI_STATUS.warning : INK.muted;
 }
 
 function Tile({
@@ -213,7 +218,7 @@ export function InsightsPanel({ insights, onSelectFile, onOpenFile }: Props) {
       }
       style={{ '--v': value, '--c': scoreColor(value) } as React.CSSProperties}
     >
-      <span style={{ color: value >= 40 ? scoreColor(value) : undefined }}>
+      <span style={{ color: value >= 55 ? scoreColor(value) : undefined }}>
         {showRaw && raw !== undefined ? raw : value}
       </span>
     </td>

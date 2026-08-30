@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeBurst } from '../shared/activity';
 import type { Decision } from '../shared/tasks';
+import type { ChannelMessage } from '../shared/channel';
 import {
   CONCURRENT_MS,
   agentIdOf,
@@ -521,5 +522,81 @@ describe('the queue', () => {
       many.push(burst({ id: `b${i}`, changed: [`f${i}.ts`], endedAt: i * 10 + 5, ...two }));
     }
     expect(conflicts({ bursts: many, limit: 20 })).toHaveLength(20);
+  });
+});
+
+describe('a crossed notice', () => {
+  /*
+   * The only crossing reported against something an agent *said* rather than
+   * something it did — and so the only one that can be raised on the first
+   * write rather than the second. There is no lock behind it: the point is
+   * that ignoring the room is visible, not that it is prevented.
+   */
+  const notice = (over: Partial<ChannelMessage> = {}): ChannelMessage => ({
+    id: 'm1',
+    at: 900,
+    from: 'mcp:a',
+    fromName: 'Claude 1',
+    fromTool: 'claude',
+    to: null,
+    toName: null,
+    kind: 'taking',
+    text: 'Moving the port lookup out of the session',
+    paths: ['shared/graph.ts'],
+    ...over,
+  });
+
+  const wrote = (id: string, at: number, over: Partial<ChangeBurst> = {}) =>
+    burst({ id, changed: ['shared/graph.ts'], endedAt: at, agentId: 'mcp:b', agentName: 'Claude 2', ...over });
+
+  it('names both agents and the file', () => {
+    const [found] = conflicts({ bursts: [wrote('b1', 1_000)], channel: [notice()] });
+    expect(found.kind).toBe('crossed-notice');
+    expect(found.summary).toBe('Claude 2 wrote shared/graph.ts after Claude 1 said it was taking it');
+    expect(found.agents.map((a) => a.label)).toEqual(['Claude 2', 'Claude 1']);
+  });
+
+  it('is not raised against the agent that posted the notice', () => {
+    const own = wrote('b1', 1_000, { agentId: 'mcp:a', agentName: 'Claude 1' });
+    expect(conflicts({ bursts: [own], channel: [notice()] })).toEqual([]);
+  });
+
+  it('is not raised once the agent posted that it was done', () => {
+    const done = notice({ id: 'm2', at: 950, kind: 'done', text: 'all yours' });
+    expect(conflicts({ bursts: [wrote('b1', 1_000)], channel: [notice(), done] })).toEqual([]);
+  });
+
+  it('is not raised for a write that landed before anyone said anything', () => {
+    expect(conflicts({ bursts: [wrote('b1', 800)], channel: [notice()] })).toEqual([]);
+  });
+
+  /*
+   * The weaker rungs of attribution name an agent by inference — from a task
+   * card, or from being the only one running. A crossing reported against a
+   * guess is worse than no crossing at all.
+   */
+  it('is not raised when we only inferred who wrote it', () => {
+    const guessed = burst({ id: 'b1', changed: ['shared/graph.ts'], endedAt: 1_000, agentId: 'task:t7' });
+    expect(conflicts({ bursts: [guessed], channel: [notice()] })).toEqual([]);
+  });
+
+  it('reports you as the crosser too, since an agent is about to overwrite you', () => {
+    const mine = burst({
+      id: 'b1',
+      changed: ['shared/graph.ts'],
+      endedAt: 1_000,
+      agent: 'you',
+      agentId: 'you',
+    });
+    const [found] = conflicts({ bursts: [mine], channel: [notice()] });
+    expect(found.summary).toBe('You wrote shared/graph.ts after Claude 1 said it was taking it');
+  });
+
+  it('puts a two-tone mark on the file, like a contested one', () => {
+    const found = conflicts({ bursts: [wrote('b1', 1_000)], channel: [notice()] });
+    expect(contestedBy(found, 'shared/graph.ts').map((p) => p.label).sort()).toEqual([
+      'Claude 1',
+      'Claude 2',
+    ]);
   });
 });

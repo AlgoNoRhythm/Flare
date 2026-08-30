@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Lane, Task } from '../../shared/tasks';
 import { ago } from '../format';
+import { IconCopy } from './icons';
 
 /**
  * One task, at a size you can actually read it at.
@@ -30,6 +31,8 @@ interface Props {
   /** files currently selected on the graph, for the one-click add */
   selectedPaths: readonly string[];
   onSave(): void;
+  /** keep the text, but as a draft: shown on the board, never handed to an agent */
+  onSaveDraft(): void;
   onCancel(): void;
   onDelete(): void;
   onLane(laneId: string): void;
@@ -45,6 +48,7 @@ export function TaskModal({
   onDraft,
   selectedPaths,
   onSave,
+  onSaveDraft,
   onCancel,
   onDelete,
   onLane,
@@ -53,6 +57,8 @@ export function TaskModal({
   onCopyForAgent,
 }: Props) {
   const titleRef = useRef<HTMLInputElement | null>(null);
+  /** when this dialog appeared — see the backdrop's grace period */
+  const openedAt = useRef(Date.now());
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -60,14 +66,32 @@ export function TaskModal({
 
   const paths = draft.paths.split('\n').map((p) => p.trim()).filter(Boolean);
 
+  /*
+   * A click on the backdrop with unsaved text asks first.
+   *
+   * Clicking outside is how a dialog is dismissed by reflex, and it used to
+   * throw away whatever was typed. Escape and Cancel still discard — those
+   * are deliberate — but the reflex gets a question: save it, keep it as a
+   * draft, or really drop it.
+   */
+  const dirty =
+    draft.title !== task.title || draft.brief !== task.brief || draft.paths !== task.paths.join('\n');
+  const [confirming, setConfirming] = useState(false);
+
   return (
     <div
       className="modal-backdrop"
       data-testid="task-modal-backdrop"
       onMouseDown={(e) => {
         // only a click that both starts and ends on the backdrop dismisses:
-        // dragging a text selection out of the textarea used to close it
-        if (e.target === e.currentTarget) onCancel();
+        // dragging a text selection out of the textarea used to close it.
+        // And not in the instant after opening — the modal is opened by
+        // double-clicking a card, whose second click lands here a few
+        // milliseconds later and used to close what the first click opened.
+        if (Date.now() - openedAt.current < 350) return;
+        if (e.target !== e.currentTarget) return;
+        if (dirty) setConfirming(true);
+        else onCancel();
       }}
     >
       <div
@@ -193,6 +217,24 @@ export function TaskModal({
           other way round once, which put the irreversible action exactly where
           the eye goes for the primary one.
         */}
+        {confirming && (
+          <div className="tm-confirm" role="alertdialog" data-testid="task-unsaved">
+            <span className="tm-confirm-text">Unsaved changes.</span>
+            <span className="spacer" />
+            <button className="btn" onClick={() => setConfirming(false)}>
+              Keep editing
+            </button>
+            <button className="btn danger" onClick={onCancel} data-testid="task-unsaved-discard">
+              Discard
+            </button>
+            <button className="btn" onClick={onSaveDraft} data-testid="task-unsaved-draft">
+              Save as draft
+            </button>
+            <button className="btn primary" onClick={onSave} data-testid="task-unsaved-save">
+              Save
+            </button>
+          </div>
+        )}
         <div className="task-actions">
           <button className="btn danger" title="delete this task" onClick={onDelete} data-testid="task-delete">
             Delete
@@ -204,7 +246,7 @@ export function TaskModal({
             onClick={onCopyForAgent}
             data-testid="task-modal-copy"
           >
-            ⧉ Copy for agent
+            <IconCopy size={12} /> Copy for agent
           </button>
           <button className="btn" title="Esc" onClick={onCancel}>
             Cancel

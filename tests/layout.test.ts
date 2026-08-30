@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampTerminal } from '../src/layout';
+import { clampTerminal, openingTerminalHeight } from '../src/layout';
 
 /**
  * The graph keeps a floor.
@@ -29,5 +29,34 @@ describe('clampTerminal', () => {
 
   it('never goes below the drag floor', () => {
     expect(clampTerminal(10, 1000)).toBe(80);
+  });
+});
+
+/**
+ * The graph has the bigger half on open.
+ *
+ * A saved height is honoured, but only up to a third of the window: the
+ * terminal dragged tall to read yesterday's log is not what a graph-first IDE
+ * should greet a project with today.
+ */
+describe('openingTerminalHeight', () => {
+  it('gives a fresh window a fifth of its height', () => {
+    expect(openingTerminalHeight(undefined, 1000)).toBe(180);
+  });
+
+  it('caps a tall saved height at a third of the window', () => {
+    expect(openingTerminalHeight(600, 1000)).toBe(300);
+  });
+
+  it('keeps a saved height that already leaves the graph the room', () => {
+    expect(openingTerminalHeight(200, 1000)).toBe(200);
+  });
+
+  it('never opens a fresh window past the default ceiling', () => {
+    expect(openingTerminalHeight(undefined, 2400)).toBe(320);
+  });
+
+  it('still respects the floors on a short window', () => {
+    expect(openingTerminalHeight(undefined, 400)).toBe(clampTerminal(150, 400));
   });
 });

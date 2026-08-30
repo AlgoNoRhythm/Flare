@@ -78,7 +78,7 @@ const KIND_HINT: Record<CommandKind, string> = {
  * orange, and the selection is warm rather than the stock editor blue that
  * belonged to nothing in this app.
  */
-function terminalTheme(): { background: string; foreground: string; cursor: string; cursorAccent: string; selectionBackground: string; selectionForeground: string } {
+function terminalTheme(): import('@xterm/xterm').ITheme {
   const read = (name: string, fallback: string): string => {
     if (typeof document === 'undefined') return fallback;
     const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -92,6 +92,29 @@ function terminalTheme(): { background: string; foreground: string; cursor: stri
     cursorAccent: background,
     selectionBackground: read('--accent-bg-strong', '#4a2c1b'),
     selectionForeground: read('--accent-pale', '#f7d6bf'),
+    /*
+     * The ANSI sixteen, from the app's own palette instead of xterm's stock
+     * VGA set — the one surface that still shouted saturated 1987 blue at a
+     * muted UI. Signals map to the signal colours, hues to the categorical
+     * slots, and because the tokens flip with the theme, `ls` is readable on
+     * white without a second table.
+     */
+    black: read('--n5', '#252a34'),
+    red: read('--sig-crit', '#d06262'),
+    green: read('--sig-good', '#4ac94a'),
+    yellow: read('--sig-warn', '#d1ae64'),
+    blue: read('--cat-1', '#7c9fca'),
+    magenta: read('--cat-5', '#ca7e9a'),
+    cyan: read('--cat-3', '#69c2a3'),
+    white: read('--n11', '#a1a8b4'),
+    brightBlack: read('--n9', '#656d7b'),
+    brightRed: read('--crit-soft', '#e6a8a8'),
+    brightGreen: read('--good', '#63ab7a'),
+    brightYellow: read('--warn-soft', '#e0bd7f'),
+    brightBlue: read('--info', '#86b6ef'),
+    brightMagenta: read('--violet', '#a289c9'),
+    brightCyan: read('--cat-3', '#69c2a3'),
+    brightWhite: read('--n13', '#e6e9ee'),
   };
 }
 
@@ -308,11 +331,12 @@ export function TerminalPanel({
   };
 
   /**
-   * Dismiss the connect panel and hand the terminal back.
+   * Dismiss the connect dialog and hand the terminal back.
    *
-   * The panel sits above the terminal and takes its height, so the point of
-   * closing it is almost always "now let me paste this" — which needs the
-   * terminal both refitted and focused, not merely revealed.
+   * Closing it is almost always followed by a paste — the dialog's own primary
+   * button copies and closes — so the terminal is refocused rather than merely
+   * uncovered. It refits too: harmless now the dialog floats, and still right
+   * if anything ever puts a strip back above the terminal.
    */
   const closeConnect = () => {
     setShowConnect(false);
@@ -432,9 +456,10 @@ export function TerminalPanel({
         <button className="btn" style={{ marginLeft: 4, padding: '1px 8px' }} onClick={() => createTerminal()} data-testid="terminal-new">
           +
         </button>
+        {/* the shells end here; what follows is about them, not one of them */}
+        <span className="tt-sep" aria-hidden="true" />
         <div
           className={`tab${showCommands ? ' active' : ''}`}
-          style={{ marginLeft: 8 }}
           onClick={() => setShowCommands((s) => !s)}
           title={
             showCommands
@@ -466,16 +491,23 @@ export function TerminalPanel({
           </div>
         ) : (
           <>
+            {/* the agent cluster keeps the right end of the bar to itself */}
+            <span className="spacer" />
+            {/*
+              The nudge retires itself: it exists for the session where no
+              agent has shown up yet, and a bar that keeps explaining after
+              one has is chrome doing the talking.
+            */}
+            {/* the map keys every terminal, agent or not — the values say */}
+            {!Object.values(agents).some(Boolean) && (
+              <span className="tt-hint">run your agent here — claude · codex · opencode</span>
+            )}
             {/*
               What happens when that agent stops, beside where you start one.
 
               A status, not an editor: it says what is set and takes you to the
               Routine, which is the one place it is set. A second control here
               writing a second field is exactly what made this hard to find.
-
-              Left of the connect affordance rather than right of it, because
-              the risk-alert stack floats over the bottom-right corner and
-              anything pushed that far along the bar stops being clickable.
             */}
             {onOpenRoutine && (
               <button
@@ -491,9 +523,6 @@ Click to change it in the Routine.`}
                 </span>
               </button>
             )}
-            <span className="muted" style={{ marginLeft: 10, fontSize: 11 }}>
-              run your agent here — claude · codex · opencode
-            </span>
             {mcp && mcp.port > 0 && (
               <button
                 className={`btn mcp-btn${showConnect ? ' on' : ''}`}
@@ -507,7 +536,9 @@ Click to change it in the Routine.`}
           </>
         )}
       </div>
-      {showConnect && mcp && mcp.port > 0 && !showCommands && (
+      {/* a dialog rather than a strip, so it no longer has to hide behind the
+          command log or give up its height to the terminal */}
+      {showConnect && mcp && mcp.port > 0 && (
         <McpConnect port={mcp.port} slug={mcp.slug} onClose={closeConnect} />
       )}
       <div className="terminal-body" ref={bodyRef} style={{ display: showCommands ? 'none' : 'block' }} />

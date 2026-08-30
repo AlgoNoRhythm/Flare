@@ -83,6 +83,7 @@
 
   --good: #63ab7a;
   --good-line: #27452f;
+  --good-bg: #102117;
   --warn: #d3a44e;
   --warn-soft: #e0bd7f;
   --warn-dim: #a8802f;
@@ -179,6 +180,31 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 6px 20px -10px rgba(0, 0, 0, 0.65);
   --shadow-3: 0 18px 44px -20px rgba(0, 0, 0, 0.8);
+
+  /*
+   * The rest of the shadow family, and the scrim. These were referenced all
+   * over the sheet without ever being written down, and an undefined var in a
+   * box-shadow silently voids the whole declaration — so cards drew no
+   * shadow, modal backdrops drew no dim, and the selection ring lost its
+   * outer glow. Stated per theme for the same reason as --shadow-1..3.
+   */
+  --scrim: rgba(0, 0, 0, 0.55);
+  --card-sheen: rgba(255, 255, 255, 0.05);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover: 0 5px 16px -6px rgba(0, 0, 0, 0.6);
+  --shadow-drop: 0 8px 20px -10px rgba(0, 0, 0, 0.65);
+
+  /* how far the lens tint may carry across a card: white dilutes a tint far
+     more than near-black does, so the light theme runs it further */
+  --lens-tint-max: 34%;
+  --lens-tint-far: 55%;
+
+  /* labels painted on coloured treemap tiles need a shade under them */
+  --text-shade: 0 1px 2px rgba(0, 0, 0, 0.55);
+
+  /* the recessed seams that set the side panels behind the content */
+  --seam-r: inset -10px 0 12px -12px rgba(0, 0, 0, 0.55);
+  --seam-l: inset 10px 0 12px -12px rgba(0, 0, 0, 0.55);
 }
 
 /*
@@ -207,7 +233,9 @@
   --n5: #d2d7e1;
   --n6: #c0c6d3;
   --n7: #a7aebd;
-  --edge: #c6ccd7;
+  /* deeper than its dark twin's position on the ramp: at the resting 0.32
+     opacity, #c6ccd7 on this surface was a graph with no visible edges */
+  --edge: #9aa4b4;
   --n8: #8d95a5;
   --n9: #737b8b;
   --n10: #5b6372;
@@ -227,6 +255,7 @@
 
   --good: #1f7a45;
   --good-line: #b7ddc4;
+  --good-bg: #eaf6ee;
   --warn: #8a6415;
   --warn-soft: #6d4d0c;
   --warn-dim: #a8802f;
@@ -276,6 +305,20 @@
   --shadow-1: 0 1px 2px rgba(23, 27, 34, 0.08);
   --shadow-2: 0 6px 20px -10px rgba(23, 27, 34, 0.28);
   --shadow-3: 0 18px 44px -20px rgba(23, 27, 34, 0.4);
+
+  --scrim: rgba(23, 27, 34, 0.35);
+  --card-sheen: rgba(255, 255, 255, 0.75);
+  --shadow-card: 0 1px 3px rgba(23, 27, 34, 0.12);
+  --shadow-card-hover: 0 5px 16px -6px rgba(23, 27, 34, 0.24);
+  --shadow-drop: 0 8px 20px -10px rgba(23, 27, 34, 0.26);
+
+  --lens-tint-max: 52%;
+  --lens-tint-far: 72%;
+
+  --text-shade: 0 1px 2px rgba(255, 255, 255, 0.6);
+
+  --seam-r: inset -10px 0 12px -12px rgba(23, 27, 34, 0.14);
+  --seam-l: inset 10px 0 12px -12px rgba(23, 27, 34, 0.14);
 }
 
 /* ---------------------------------- roles: the same in every theme -------- */
@@ -298,6 +341,47 @@
   --ink-2: var(--n11);
   --ink-muted: var(--n9);
   --ink-faint: var(--n8);
+
+  /*
+   * Translucent derivatives. Roles rather than palette because every one is
+   * mixed from a token that already flips with the theme — a wash of the ink
+   * is a dark film on light and a light film on dark, from one rule.
+   */
+  --veil: color-mix(in srgb, var(--n1) 72%, transparent);
+  --veil-strong: color-mix(in srgb, var(--n1) 88%, transparent);
+  --wash: color-mix(in srgb, var(--n13) 4%, transparent);
+  --wash-strong: color-mix(in srgb, var(--n13) 8%, transparent);
+  --good-wash: color-mix(in srgb, var(--good) 13%, transparent);
+  --warn-wash: color-mix(in srgb, var(--warn) 13%, transparent);
+  --crit-wash: color-mix(in srgb, var(--crit) 13%, transparent);
+  --sel-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-wash: color-mix(in srgb, var(--accent) 12%, transparent);
+  /* the drag-select rectangle's fill */
+  --band: color-mix(in srgb, var(--accent) 18%, transparent);
+
+  /* stragglers that were referenced under these names */
+  --bg-base: var(--n1);
+  --ink-1: var(--n12);
+  --shadow-float: var(--shadow-2);
+
+  /*
+   * The two side panels are their own plane: the deepest ground, warmed by a
+   * breath of the brand, so they read as the tray the content sits in rather
+   * than more of the frame. One definition serves both themes — accent and
+   * n0 both flip with the palette.
+   */
+  --sidebar-bg: color-mix(in srgb, var(--accent) 4%, var(--n0));
+
+  /* one tracking for every uppercase micro-label; ten values had grown here */
+  --track-caps: 0.06em;
+
+  /*
+   * Motion, in two speeds. Five ad-hoc durations (90–160ms) had grown across
+   * the sheet; hover feedback runs fast, things that appear or move run
+   * medium, and nothing else is a legitimate speed.
+   */
+  --t-fast: var(--t-fast);
+  --t-med: 160ms;
 
   /*
    * Font stacks that resolve on every target OS.
@@ -361,6 +445,13 @@ body,
   -webkit-app-region: no-drag;
 }
 
+/* one shape for the title-bar row: the chips beside these are pills, and a
+   rectangle in a row of capsules reads as a different kind of thing */
+.topbar .btn {
+  border-radius: 999px;
+  padding: 3px 11px;
+}
+
 .window-controls {
   display: flex;
   align-self: stretch;
@@ -407,7 +498,7 @@ body,
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   overflow: hidden;
-  animation: palette-in 120ms ease-out;
+  animation: palette-in var(--t-med) ease-out;
 }
 
 @keyframes palette-in {
@@ -451,8 +542,11 @@ body,
 }
 
 .palette-item.active {
-  background: var(--accent-deep);
-  color: var(--n13);
+  /* the same voice as the active view tab — the dark theme used a filled
+     accent-deep bar here, the loudest selection anywhere in the app */
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
 }
 
 .palette-kind {
@@ -462,7 +556,7 @@ body,
 }
 
 .palette-item.active .palette-kind {
-  color: var(--accent-pale);
+  color: var(--accent-soft);
 }
 
 .palette-label {
@@ -481,45 +575,371 @@ body,
   padding: 14px;
   color: var(--n10);
   text-align: center;
+  line-height: 1.6;
+}
+
+/* ---- the palette's two modes: Jump (files, commands) and Text (find in files) ---- */
+.palette.search {
+  width: 800px;
+}
+
+.palette.search .palette-list {
+  max-height: 60vh;
+}
+
+.palette-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 0;
+}
+
+.palette-mode {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n10);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.palette-mode:hover {
+  color: var(--n13);
+}
+
+.palette-mode.active {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.palette-modes-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--ink-faint);
+  padding-right: 4px;
+}
+
+.palette kbd,
+.search-hints kbd {
+  font: inherit;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  background: var(--n2);
+  color: var(--n11);
+}
+
+.palette-opt {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--n10);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.palette-opt:hover {
+  color: var(--n13);
+}
+
+.palette-opt.on {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  border-color: var(--accent-line);
+}
+
+.palette-opt.wide {
+  font-family: inherit;
+}
+
+.palette-replace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--n5);
+  font-size: 11px;
+}
+
+.palette-replace {
+  flex: 0 1 280px;
+  background: var(--n2);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  color: var(--n13);
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.palette-replace:focus {
+  border-color: var(--accent);
+}
+
+.palette-confirm-text {
+  color: var(--warn-soft);
+}
+
+.palette-count {
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/*
+ * One group per file, told apart by the colour its folder has on the graph:
+ * a rail and a faint wash in that colour, so a long list reads as files
+ * rather than as lines. The file row carries the first match; a file with
+ * several unfolds on click or →.
+ */
+.search-group {
+  --gc: var(--n7);
+  margin: 2px 4px 2px 2px;
+  padding: 1px 0 2px;
+  border-left: 3px solid var(--gc);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: color-mix(in srgb, var(--gc) 5%, transparent);
+}
+
+.search-file {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 10px 3px 8px;
+  font-size: 11px;
+  color: var(--n11);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.search-file:hover,
+.search-file.active {
+  background: var(--bg-hover);
+}
+
+.search-file.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.search-chevron {
+  flex: 0 0 10px;
+  color: var(--ink-faint);
+  font-size: 9px;
+}
+
+.search-file-path {
+  flex: 0 0 auto;
+  color: var(--n12);
+}
+
+.search-file-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: 6px;
+  overflow: hidden;
+  opacity: 0.85;
+}
+
+/* the editor's colours, without the editor: Monaco scopes its token classes
+   to .monaco-editor, and that class brings a background and a font along */
+.search-code.monaco-editor {
+  display: inline !important;
+  position: static !important;
+  background: transparent !important;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: inherit;
+  /* the editor's frame, outline and shadow come with the class; none of
+     them belong on a line of text in a list */
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.search-code.monaco-editor > span {
+  display: inline;
+}
+
+.search-code.monaco-editor mark {
+  background: var(--warn-wash);
+  color: var(--warn-soft);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.search-file-count {
+  background: var(--n4);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  color: var(--ink-2);
+}
+
+.search-hit {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 10px 3px 18px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.search-hit:hover,
+.search-hit.active {
+  background: var(--bg-hover);
+}
+
+.search-hit.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.search-line {
+  flex: 0 0 34px;
+  text-align: right;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.search-preview {
+  color: var(--n12);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-preview mark {
+  background: var(--warn-wash);
+  color: var(--warn-soft);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* ---- the top bar's search box and the hints that hang under it ---- */
+.search-wrap {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.search-hints {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 130;
+  width: 400px;
+  padding: 4px;
+  background: var(--bg-float);
+  border: 1px solid var(--n6);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  animation: palette-in var(--t-fast) ease-out;
+}
+
+.search-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--n12);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.search-hint:hover {
+  background: var(--bg-hover);
+  color: var(--n13);
+}
+
+.search-hint.action {
+  color: var(--accent-soft);
+  margin-top: 2px;
+  border-top: 1px solid var(--line-faint);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+}
+
+.search-hint.action kbd {
+  margin-left: auto;
+}
+
+.search-hint-kind {
+  color: var(--ink-faint);
+  width: 14px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.search-hint-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-hint-foot {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  color: var(--ink-faint);
 }
 
 /* ---------- toasts ---------- */
 /*
- * One corner for everything that talks to you, bottom-right, above the status
- * bar: transient receipts on top, the alert queue underneath it. They used to
- * be two independent fixed corners, which meant a queue of alerts and a toast
- * about the file you just saved drew on top of each other.
+ * Transient receipts, top-right under the bar.
+ *
+ * They used to share the bottom-right corner with the risky-change queue,
+ * which is where the terminal is: a card there hides the output of the very
+ * agent whose work it reports on. Up here they cover nothing for long — and
+ * the whole stack is click-through, because a toast has no controls and a
+ * receipt for something you just did must never be able to eat the next thing
+ * you click, whatever it is floating over. The queue that *does* have controls
+ * is a chip in the top bar instead; see RiskAlerts.
+ *
+ * `--overlay-top` is measured and published by the app root: the bottom of the
+ * lowest chrome above the content — the tab row, or the graph's own lens
+ * toolbar, which reaches this same edge and wraps to two rows on a narrow
+ * window. A fixed offset would be wrong on macOS, wrong when it wraps, and
+ * wrong on every tab but one.
  */
 .corner-stack {
   position: fixed;
+  top: calc(var(--overlay-top, 72px) + 10px);
   /*
-   * Clear of the details panel, for the same reason they clear the terminal.
-   * Pinned to the window's right edge, they land on top of an open panel and
-   * swallow the clicks on whatever it has near the bottom. `--details-w` is
-   * the panel's width, or 0 when it is closed.
+   * Clear of the details panel. Pinned to the window's right edge, the stack
+   * lands on top of an open panel; `--details-w` is its width, or 0 when it
+   * is closed.
    */
   right: calc(var(--details-w, 0px) + 16px);
-  /*
-   * Above the terminal, not over it.
-   *
-   * These float bottom-right and were landing on the terminal panel — hiding
-   * the output of the agent whose change the alert is about, and swallowing
-   * clicks on the right end of the terminal's own toolbar. `--terminal-h` is
-   * published by the app root; the fallback keeps them off the status bar for
-   * any surface that does not set it.
-   */
-  bottom: calc(var(--terminal-h, 0px) + 40px);
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 8px;
   z-index: 120;
-  /* the gaps between the cards are not a target; each child takes its own */
   pointer-events: none;
-}
-
-.corner-stack > * {
-  pointer-events: auto;
 }
 
 .toasts {
@@ -537,7 +957,7 @@ body,
   padding: 8px 14px;
   font-size: 12px;
   box-shadow: var(--shadow-2);
-  animation: toast-in 150ms ease-out;
+  animation: toast-in var(--t-med) ease-out;
 }
 
 .toast-success {
@@ -550,38 +970,87 @@ body,
 
 @keyframes toast-in {
   from {
-    transform: translateX(20px);
+    transform: translateY(-10px);
     opacity: 0;
   }
   to {
-    transform: translateX(0);
+    transform: translateY(0);
     opacity: 1;
   }
 }
 
 /* ---------- risky-change alerts ----------
-   A reminder stack, not a toast: it waits for an answer rather than fading
-   after four seconds. It sits at the bottom of the corner stack, so the
-   transient toasts above it move rather than landing on top. */
-.risk-alerts {
+   A chip in the top bar, and the cards one click under it.
+
+   It was a floating stack of cards, and there is no corner for one: the
+   bottom-right is the terminal, and the top-right is where every tab keeps
+   its own controls — so the stack spent its life sitting on `+ Lane`, on
+   `Re-layout`, on the channel's composer, swallowing clicks meant for them.
+   The review queue beside it went the same way for the same reason. In the
+   bar it has its own row and can cover nothing at all. */
+.ra-anchor {
+  position: relative;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.ra-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border: 1px solid var(--warn-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--warn-soft);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ra-chip:hover,
+.ra-chip.on {
+  background: var(--warn-bg);
+}
+
+.ra-mark {
+  color: var(--warn);
+}
+
+.ra-count {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ra-word {
+  color: var(--ink-muted);
+}
+
+.ra-pop {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
   width: 312px;
-  max-height: calc(100vh - 220px);
+  max-height: min(60vh, 560px);
   display: flex;
   flex-direction: column;
+  z-index: 130;
   /* Solid, not a tint over whatever it happens to be covering: this floats
-     over the details panel and the terminal, and a half-transparent card on
-     top of a wall of code is unreadable. */
+     over a wall of code, and a half-transparent card on top of one is
+     unreadable. */
   background: var(--bg-float);
-  border: 1px solid var(--warn-line);
-  border-radius: var(--r-lg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow-float);
-  animation: ra-float-in 260ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  animation: ra-float-in var(--t-med) cubic-bezier(0.2, 0.8, 0.3, 1);
 }
 
 @keyframes ra-float-in {
   from {
     opacity: 0;
-    transform: translate3d(12px, 10px, 0) scale(0.985);
+    transform: translate3d(0, -6px, 0);
   }
   to {
     opacity: 1;
@@ -594,22 +1063,13 @@ body,
   align-items: center;
   gap: 8px;
   padding: 7px 8px 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--warn-bg);
-  border-radius: var(--r-md) var(--r-md) 0 0;
+  border-bottom: 1px solid var(--line-faint);
 }
 
 .ra-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--warn-soft);
-}
-
-.ra-mark {
-  color: var(--warn);
+  color: var(--ink-dim);
 }
 
 .ra-list {
@@ -619,11 +1079,11 @@ body,
 }
 
 .ra-card {
-  padding: 8px 10px 7px;
+  padding: 7px 10px 6px;
   border-bottom: 1px solid var(--line-faint);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .ra-card:last-child {
@@ -639,7 +1099,7 @@ body,
 .ra-path {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--ink-dim);
   /* the tail of a path is the part that identifies it */
   direction: rtl;
@@ -651,14 +1111,14 @@ body,
 
 .ra-when {
   flex: 0 0 auto;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--ink-muted);
 }
 
 .ra-why {
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-muted);
 }
 
 .ra-foot {
@@ -669,7 +1129,7 @@ body,
 }
 
 .ra-agent {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--ink-muted);
 }
 
@@ -691,34 +1151,17 @@ body,
 
 .ra-primary {
   border-color: var(--accent-line);
-  background: var(--accent-deep);
+  background: transparent;
   color: var(--accent-pale);
 }
 
 .ra-primary:hover {
-  background: var(--accent-deep-hover);
-  color: #fff;
+  background: var(--accent-deep);
+  color: var(--accent-pale);
 }
 
 .ra-quiet {
   background: transparent;
-}
-
-.ra-more {
-  font: inherit;
-  font-size: 11px;
-  padding: 5px;
-  border: 0;
-  border-top: 1px solid var(--line);
-  background: transparent;
-  color: var(--ink-muted);
-  cursor: pointer;
-  border-radius: 0 0 var(--r-md) var(--r-md);
-}
-
-.ra-more:hover {
-  background: var(--bg-hover);
-  color: var(--ink-dim);
 }
 
 /* the review row an alert sent you to, so the click lands somewhere visible */
@@ -731,53 +1174,8 @@ body,
   font-weight: 600;
 }
 
-/* ---------- hover card ---------- */
-.hover-card {
-  position: absolute;
-  z-index: 8;
-  min-width: 180px;
-  max-width: 300px;
-  background: var(--veil-strong);
-  border: 1px solid var(--n6);
-  border-radius: var(--r-lg);
-  padding: 8px 10px;
-  pointer-events: none;
-  box-shadow: var(--shadow-2);
-  animation: hover-in 100ms ease-out;
-}
-
-@keyframes hover-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.hover-title {
-  color: var(--n13);
-  font-size: 12px;
-  word-break: break-all;
-  margin-bottom: 4px;
-}
-
-.hover-metrics {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  color: var(--n12);
-  font-size: 11px;
-  margin-bottom: 2px;
-}
-
-.hover-hint {
-  color: var(--n9);
-  font-size: 10px;
-  margin-top: 4px;
-}
+/* the hover card is gone — its styles went with it (nothing rendered
+   .hover-card any more, and dead chrome CSS invites someone to revive it) */
 
 /* ---------- command log ---------- */
 .command-log {
@@ -803,6 +1201,7 @@ body,
 .cmd-time {
   color: var(--n9);
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
   font-size: 11px;
   flex: 0 0 auto;
 }
@@ -836,7 +1235,7 @@ body,
   box-shadow: var(--shadow-2);
   padding: 4px;
   font-size: 12px;
-  animation: palette-in 100ms ease-out;
+  animation: palette-in var(--t-fast) ease-out;
 }
 
 .ctx-item {
@@ -873,7 +1272,7 @@ body,
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   padding: 16px;
-  animation: palette-in 120ms ease-out;
+  animation: palette-in var(--t-med) ease-out;
 }
 
 .modal-title {
@@ -990,7 +1389,7 @@ body,
 .stat-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   color: var(--n10);
   margin-top: 2px;
 }
@@ -1015,9 +1414,9 @@ body,
 
 /* the counts are severities, not a mystery triple of glyphs */
 .health-cap {
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
 }
 
@@ -1071,7 +1470,7 @@ body,
   margin: 0;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   color: var(--n11);
   flex: 0 0 auto;
 }
@@ -1082,7 +1481,7 @@ body,
 }
 
 .metrics-hint {
-  font-size: 10.5px;
+  font-size: 10px;
   margin-left: auto;
 }
 
@@ -1099,7 +1498,7 @@ body,
   background: transparent;
   border: none;
   color: var(--n10);
-  font-size: 10.5px;
+  font-size: 10px;
   font-family: inherit;
   padding: 2px 8px;
   cursor: pointer;
@@ -1151,7 +1550,7 @@ body,
   padding: 8px 10px;
   margin-bottom: 7px;
   background: var(--n1);
-  transition: background 110ms ease;
+  transition: background var(--t-fast) ease;
 }
 
 .issue:hover {
@@ -1162,7 +1561,7 @@ body,
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--n13);
 }
 
@@ -1177,14 +1576,14 @@ body,
 
 .rule-pill {
   flex: 0 0 auto;
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-caps);
 }
 
 .issue-detail {
   color: var(--n11);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.45;
   margin: 4px 0 5px;
 }
@@ -1198,7 +1597,7 @@ body,
 
 .issue-paths .deplink {
   display: inline;
-  font-size: 10.5px;
+  font-size: 10px;
   background: var(--n3);
   border-radius: var(--r-sm);
   padding: 1px 5px;
@@ -1230,7 +1629,7 @@ body,
 .metrics-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 .metrics-table th {
@@ -1247,7 +1646,7 @@ body,
   white-space: nowrap;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-caps);
   font-weight: 600;
 }
 
@@ -1310,7 +1709,7 @@ body,
 /* the unit for a composite column, so the cell can stay a bare number */
 .col-scale {
   margin-left: 2px;
-  font-size: 8.5px;
+  font-size: 9px;
   letter-spacing: 0;
   color: var(--n9);
   text-transform: none;
@@ -1422,9 +1821,10 @@ body,
 .topbar input.search {
   background: var(--n2);
   border: 1px solid var(--n6);
-  border-radius: var(--r-sm);
+  /* the title-bar row speaks in capsules now; see .topbar .btn */
+  border-radius: 999px;
   color: var(--n13);
-  padding: 4px 8px;
+  padding: 4px 12px;
   width: 260px;
   outline: none;
 }
@@ -1446,9 +1846,9 @@ button.btn {
   cursor: pointer;
   font-size: 12px;
   transition:
-    background 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
+    background var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    color var(--t-fast) ease;
 }
 
 button.btn:hover {
@@ -1506,9 +1906,9 @@ button.btn.warn {
 }
 
 .sidebar {
-  background: var(--n0);
-  background-image: linear-gradient(180deg, var(--wash), transparent 180px);
-  border-right: 1px solid var(--line-faint);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--line);
+  box-shadow: var(--seam-r);
   flex: 0 0 auto;
   /* header pinned, tree scrolls under it */
   display: flex;
@@ -1518,7 +1918,226 @@ button.btn.warn {
 
 .sidebar .filetree {
   flex: 1 1 auto;
+  min-height: 60px;
   overflow: auto;
+}
+
+/* ---- the sidebar's stacked sections: Changed and Structure ---- */
+.side-changed {
+  flex: 0 0 auto;
+  max-height: 24%;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.side-sec-head {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-muted);
+}
+
+.side-sec-head::-webkit-details-marker {
+  display: none;
+}
+
+.side-sec-head::before {
+  content: '▾';
+  font-size: 8px;
+  color: var(--ink-faint);
+}
+
+.side-changed:not([open]) .side-sec-head::before {
+  content: '▸';
+}
+
+.side-sec-head:hover {
+  color: var(--ink-dim);
+}
+
+.side-sec-count {
+  background: var(--n3);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+.side-changed-list {
+  padding: 0 4px 6px;
+}
+
+.side-changed-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--n12);
+  font: inherit;
+  font-size: 12px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.side-changed-row:hover {
+  background: var(--bg-hover);
+}
+
+/* your own bubbles are already yours — the identity mark beside them read
+   as a stray hollow dot, not a signature */
+.chat-turn.mine .chat-mark {
+  display: none;
+}
+
+/* the diff chip waits for the pointer, like every other row action */
+.side-changed-row .row-btn {
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+
+.side-changed-row:hover .row-btn,
+.side-changed-row:focus-within .row-btn {
+  opacity: 1;
+}
+
+.side-changed-row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.scr-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scr-state {
+  font-size: 9px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+
+.scr-more {
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.side-folders {
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+/* ---- the inspector: one slot, always present, glowing when it has news ---- */
+.side-inspector {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 46%;
+  border-top: 1px solid var(--line);
+}
+
+.side-inspector .details-panel {
+  border-top: 0;
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.inspector-head {
+  appearance: none;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-muted);
+  transition:
+    color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
+}
+
+.inspector-head:hover {
+  color: var(--ink-dim);
+}
+
+.side-sec-chevron {
+  font-size: 8px;
+  color: var(--ink-faint);
+}
+
+.inspector-name {
+  margin-left: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  color: var(--ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.inspector-none {
+  margin-left: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.inspector-empty {
+  padding: 8px 12px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+
+/* a selection landed while the section was folded: the header carries the
+   brand's light until the section is opened */
+.side-inspector.glow .inspector-head {
+  color: var(--accent-pale);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  animation: inspector-glow 1.8s ease-in-out infinite;
+}
+
+.side-inspector.glow .inspector-name {
+  color: var(--accent-pale);
+}
+
+@keyframes inspector-glow {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px var(--accent-soft),
+      0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
 }
 
 /* the explorer's own toolbar — where people look for "new file" */
@@ -1527,36 +2146,46 @@ button.btn.warn {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 5px 4px 5px 8px;
-  border-bottom: 1px solid var(--n3);
-  background: var(--n0);
+  padding: 8px 4px 8px 10px;
+  border-bottom: 1px solid var(--line-faint);
+  background: transparent;
 }
 
 .explorer-title {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 10px;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.explorer-overline {
+  font-size: 9px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--n9);
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+}
+
+.explorer-project {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* where New file / New folder will land, so the buttons are never a guess */
 .explorer-target {
-  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-  text-transform: none;
-  letter-spacing: 0;
   font-size: 10px;
-  color: var(--n8);
+  color: var(--n9);
+  font-family: var(--font-mono);
 }
 
 .ehbtn {
@@ -1635,9 +2264,9 @@ button.btn.warn {
   font-weight: 600;
   color: var(--ink-2);
   transition:
-    background 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
+    background var(--t-fast) ease,
+    color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease;
 }
 
 .view-tab:hover {
@@ -1671,7 +2300,7 @@ button.btn.warn {
   border-radius: 999px;
   background: var(--n4);
   color: var(--ink-2);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -1710,8 +2339,8 @@ button.btn.warn {
   padding: 5px 10px;
   border-right: 1px solid var(--line-faint);
   transition:
-    background 120ms ease,
-    color 120ms ease;
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
   cursor: pointer;
   color: var(--n10);
   white-space: nowrap;
@@ -1725,7 +2354,14 @@ button.btn.warn {
   box-shadow: inset 0 -2px 0 var(--accent-muted);
 }
 
+/* the ✕ waits for the pointer — ten open files showed ten of them at once */
 .tab .close {
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+
+.tab:hover .close,
+.tab.active .close {
   opacity: 0.5;
 }
 
@@ -1777,25 +2413,16 @@ button.btn.warn {
  * canvas, so it hangs directly under the strip without needing to know how
  * tall the strip currently is.
  */
+/*
+ * The folders bar, as the sidebar's Structure section. It floated over the
+ * canvas for most of its life; docked, it works from every tab and never
+ * covers a district header or a wheel label again.
+ */
 .legend {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 4;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  width: max-content;
-  min-width: 132px;
-  max-width: 216px;
-  /* the graph keeps the rest of the height; past this the folders scroll */
-  max-height: min(52vh, 460px);
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: var(--veil);
-  border: 1px solid var(--n5);
-  border-radius: var(--r-md);
+  gap: 5px;
   padding: 7px 9px;
   font-size: 11px;
   color: var(--n12);
@@ -1893,10 +2520,127 @@ button.btn.warn {
 .lens-switcher {
   display: flex;
   gap: 1px;
-  background: var(--veil);
+  /* the same near-opaque frosted recipe as .canvas-tools: this strip floats
+     over the graph, and cards sliding beneath must read as beneath */
+  background: color-mix(in srgb, var(--n1) 92%, transparent);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--n5);
   border-radius: var(--r-md);
   overflow: hidden;
+}
+
+/*
+ * The canvas's top-right menu cluster: the lens scale, then two chips that
+ * say what is on and unfold on click, then re-layout. The full switcher rows
+ * used to own the canvas's whole top edge; this says the same from a corner.
+ */
+.canvas-menus {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.drop {
+  position: relative;
+}
+
+.drop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--n5);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--n1) 92%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--n12);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.drop-chip:hover {
+  color: var(--n13);
+  border-color: var(--n6);
+}
+
+.drop-chip.on {
+  background: var(--accent-bg);
+  border-color: var(--accent-line);
+  color: var(--accent-pale);
+}
+
+.drop-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-faint);
+}
+
+.drop-chip.on .drop-label {
+  color: var(--accent-muted);
+}
+
+.drop-caret {
+  font-size: 8px;
+  color: var(--ink-faint);
+}
+
+/* mounted always, shown on demand: closed is a display state, not absence */
+.drop-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--bg-float);
+  border: 1px solid var(--n6);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+}
+
+.drop-panel.open {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: palette-in var(--t-fast) ease-out;
+}
+
+.drop-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n12);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.drop-item:hover {
+  background: var(--bg-hover);
+  color: var(--n13);
+}
+
+.drop-item.active {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.drop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
 }
 
 .lens-btn {
@@ -1946,7 +2690,11 @@ button.btn.warn {
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 0 8px 0 0;
+  padding: 0 6px 0 0;
+  /* inset rows: the hover and selection read as a soft chip, not a
+     full-bleed highlighter stripe across the panel */
+  margin: 0 5px 0 3px;
+  border-radius: var(--r-sm);
   min-height: 22px;
   cursor: pointer;
   white-space: nowrap;
@@ -1961,12 +2709,14 @@ button.btn.warn {
 .filetree .indent {
   flex: 0 0 17px;
   align-self: stretch;
-  box-shadow: inset 1px 0 0 var(--n7);
+  /* guides are wayfinding, not content: at --n7 every level drew a fence
+     through the panel. Faint at rest, firmer only under the pointer. */
+  box-shadow: inset 1px 0 0 var(--n5);
 }
 
 .filetree .row:hover .indent,
 .filetree .row.selected .indent {
-  box-shadow: inset 1px 0 0 var(--n9);
+  box-shadow: inset 1px 0 0 var(--n8);
 }
 
 .filetree .chev,
@@ -1984,7 +2734,8 @@ button.btn.warn {
   height: 10px;
   margin-right: 4px;
   border-radius: 1px 2px 2px 2px;
-  background: var(--warn-dim);
+  /* --folder-c: the cluster colour off the graph, set on top-level folders */
+  background: var(--folder-c, var(--warn-dim));
   position: relative;
 }
 
@@ -1996,21 +2747,21 @@ button.btn.warn {
   width: 6px;
   height: 3px;
   border-radius: 1px 1px 0 0;
-  background: var(--warn-dim);
+  background: var(--folder-c, var(--warn-dim));
 }
 
 .filetree .folder.open {
   background: transparent;
-  border: 1px solid var(--warn-dim);
+  border: 1px solid var(--folder-c, var(--warn-dim));
 }
 
 .filetree .folder.open::before {
-  background: var(--warn-dim);
+  background: var(--folder-c, var(--warn-dim));
   top: -3px;
 }
 
 .filetree .row:hover {
-  background: var(--n2);
+  background: var(--bg-hover);
 }
 
 .filetree .row.selected {
@@ -2078,6 +2829,17 @@ button.btn.warn {
   padding-left: 2px;
 }
 
+/* folders are the tree's structure: a step heavier than the files they hold */
+.filetree .dir-row .fname {
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+
+.filetree .dir-row:hover .fname,
+.filetree .dir-row.multi-selected .fname {
+  color: var(--ink);
+}
+
 .filetree .dot {
   margin-left: 6px;
 }
@@ -2133,17 +2895,36 @@ button.btn.warn {
 .terminal-host {
   position: absolute;
   inset: 0 0 0 0;
-  padding: 2px 0 0 6px;
+  /* a shell that starts at the panel's very edge reads as unfinished */
+  padding: 6px 0 0 10px;
 }
 
+/*
+ * The inspector — what used to be the 320px right-hand panel, stacked into
+ * the sidebar above the tree. Selection opens it, ✕ dismisses it, and it
+ * takes at most half the sidebar so the tree stays a tree.
+ */
 .details-panel {
   position: relative;
-  background: var(--n0);
-  background-image: linear-gradient(180deg, var(--wash), transparent 180px);
-  border-left: 1px solid var(--line-faint);
-  overflow-y: auto;
   flex: 0 0 auto;
+  max-height: 46%;
+  overflow-y: auto;
+  background: transparent;
+  border-top: 1px solid var(--line);
   padding: 10px;
+  /* it appears on selection: arrive, don't pop */
+  animation: details-in var(--t-med) ease-out;
+}
+
+@keyframes details-in {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /*
@@ -2158,7 +2939,8 @@ button.btn.warn {
   position: sticky;
   top: 0;
   float: right;
-  z-index: 1;
+  /* above the sticky title, which paints later in the DOM */
+  z-index: 2;
   appearance: none;
   background: none;
   border: 0;
@@ -2177,20 +2959,32 @@ button.btn.warn {
   background: var(--n3);
 }
 
+/* the file's name rides along: the one fact every scrolled-to metric needs */
 .details-panel h3 {
-  margin: 0 0 4px;
+  position: sticky;
+  top: -10px;
+  z-index: 1;
+  margin: -10px -4px 4px;
+  padding: 10px 4px 6px;
+  background: var(--sidebar-bg);
+  box-shadow: 0 1px 0 var(--line-faint);
   font-size: 13px;
   word-break: break-all;
   color: var(--n13);
 }
 
+/* the metrics read as one plate, not a loose column of rows */
 .details-panel .kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 2px 10px;
+  gap: 3px 10px;
   font-size: 12px;
   color: var(--n12);
-  margin: 8px 0;
+  margin: 10px 0;
+  padding: 8px 10px;
+  background: var(--n1);
+  border: 1px solid var(--line-faint);
+  border-radius: var(--r-md);
 }
 
 .details-panel .kv .k {
@@ -2217,6 +3011,26 @@ button.btn.warn {
 /* a 0-100 composite, coloured by the band it falls in */
 .details-panel .score-read {
   font-variant-numeric: tabular-nums;
+  display: inline-block;
+}
+
+/* a 0–100 score, drawn as well as said — currentColor keeps the band */
+.details-panel .meter {
+  display: block;
+  height: 3px;
+  max-width: 140px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: var(--n4);
+  overflow: hidden;
+}
+
+.details-panel .meter i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.7;
 }
 
 .details-panel .score-read.low {
@@ -2242,28 +3056,80 @@ button.btn.warn {
   margin: 0 0 6px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: var(--track-caps);
   color: var(--n10);
+}
+
+/* folded sections: the heading is the summary, with the browser's marker
+   replaced by the same chevron every other collapse in the app uses */
+.details-panel details.section > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.details-panel details.section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-panel details.section > summary h4 {
+  display: inline-block;
+  margin-bottom: 0;
+}
+
+.details-panel details.section > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 12px;
+  font-size: 9px;
+  color: var(--ink-faint);
+}
+
+.details-panel details.section[open] > summary::before {
+  content: '▾';
+}
+
+.details-panel details.section[open] > summary {
+  margin-bottom: 6px;
+}
+
+.details-panel details.section > summary:hover h4 {
+  color: var(--n12);
 }
 
 .details-panel .deplink {
   display: block;
   color: var(--accent-soft);
   cursor: pointer;
-  padding: 1px 0;
+  /* rows, not raw links: the hover names the row you are about to follow */
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: var(--r-sm);
   word-break: break-all;
   font-size: 12px;
 }
 
 .details-panel .deplink:hover {
-  text-decoration: underline;
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 
+/*
+ * Six buttons used to wrap into three ragged rows of mixed widths. A grid
+ * lines them up: primary row first, and every cell the same size, so the
+ * block reads as one control group rather than six strays.
+ */
 .details-panel .actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 6px;
-  flex-wrap: wrap;
   margin-top: 8px;
+}
+
+.details-panel .actions .btn {
+  white-space: nowrap;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .pill {
@@ -2319,6 +3185,16 @@ button.btn.warn {
   display: inline-flex;
   gap: 5px;
   align-items: center;
+}
+
+/* the project path — middle-truncated in JSX (see shortPath); this only
+   guards against a pathological segment blowing the row */
+.statusbar-path {
+  display: inline-block;
+  max-width: 34vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- timeline ---------- */
@@ -2388,12 +3264,18 @@ button.btn.warn {
   padding: 2px 4px 2px 9px;
   border: 1px solid var(--warn-line);
   border-radius: 999px;
-  background: var(--warn-bg);
-  font-size: 11.5px;
+  /* outline only: the filled amber strip was the loudest thing in the window,
+     and it is on for most of an agent session. The mark and count stay warn. */
+  background: transparent;
+  font-size: 11px;
   color: var(--ink-2);
   white-space: nowrap;
   /* it lives in the drag region of the title bar */
   -webkit-app-region: no-drag;
+}
+
+.review-chip:hover {
+  background: var(--warn-bg);
 }
 
 .review-chip .rn-mark {
@@ -2418,8 +3300,8 @@ button.btn.warn {
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition:
-    background 120ms ease,
-    color 120ms ease;
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
 }
 
 .rn-btn:hover {
@@ -2440,6 +3322,12 @@ button.btn.warn {
 
 .muted {
   color: var(--n10);
+}
+
+/* inline icons sit on the text baseline beside their labels */
+svg.icon {
+  vertical-align: -2px;
+  flex: 0 0 auto;
 }
 
 .mono {
@@ -2525,7 +3413,7 @@ button.btn.warn {
   stroke-width: var(--w, 0.8px);
   opacity: 0.32;
   stroke-linecap: round;
-  transition: stroke 90ms linear, opacity 90ms linear, stroke-width 90ms linear;
+  transition: stroke var(--t-fast) linear, opacity var(--t-fast) linear, stroke-width var(--t-fast) linear;
 }
 
 .gedge.intra {
@@ -2536,22 +3424,37 @@ button.btn.warn {
   opacity: 0.5;
 }
 
+/*
+ * The rays. On hover an edge is lit as a bright core inside a soft halo of
+ * its hue — two tones and a bloom, so the line reads as a filament with
+ * body rather than a flat coloured stroke. The halo is a drop-shadow on the
+ * same path, so no second element is drawn for it. Outgoing rays run warm
+ * (the brand's own hue), incoming ones amber, as the cheat sheet says.
+ */
 .gedge.out {
-  stroke: var(--accent-soft);
+  /* blue, as the cheat sheet has always said — the stroke had drifted to
+     the brand peach, which made in and out the same warm colour */
+  stroke: var(--info);
   opacity: 1;
-  stroke-width: calc(var(--w, 0.8px) * 2.4 + 0.7px);
+  stroke-width: calc(var(--w, 0.8px) * 2 + 0.6px);
+  filter: drop-shadow(0 0 1.5px var(--cat-1))
+    drop-shadow(0 0 6px color-mix(in srgb, var(--cat-1) 55%, transparent));
 }
 
 .gedge.in {
-  stroke: var(--warn);
+  stroke: var(--warn-soft);
   opacity: 1;
-  stroke-width: calc(var(--w, 0.8px) * 2.4 + 0.7px);
+  stroke-width: calc(var(--w, 0.8px) * 2 + 0.6px);
+  filter: drop-shadow(0 0 1.5px var(--warn))
+    drop-shadow(0 0 6px color-mix(in srgb, var(--warn) 55%, transparent));
 }
 
 .gedge.onpath {
   stroke: var(--n13);
   opacity: 1;
-  stroke-width: calc(var(--w, 0.8px) * 2.8 + 1px);
+  stroke-width: calc(var(--w, 0.8px) * 2.4 + 0.8px);
+  filter: drop-shadow(0 0 1.5px var(--accent-soft))
+    drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 60%, transparent));
 }
 
 .gedge.faded {
@@ -2577,7 +3480,7 @@ button.btn.warn {
   position: absolute;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.09em;
+  letter-spacing: var(--track-caps);
   opacity: 0.72;
   pointer-events: none;
   white-space: nowrap;
@@ -2608,15 +3511,16 @@ button.btn.warn {
    */
   background-color: var(--n3);
   background-image: var(--card-body);
-  box-shadow: var(--shadow-card);
+  /* a hairline of light along the top edge sells the plate as a surface */
+  box-shadow: inset 0 1px 0 var(--card-sheen), var(--shadow-card);
   overflow: hidden;
   cursor: pointer;
   user-select: none;
   transition:
-    border-color 110ms ease,
-    box-shadow 110ms ease,
-    opacity 110ms ease,
-    transform 110ms ease;
+    border-color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease,
+    opacity var(--t-fast) ease,
+    transform var(--t-fast) ease;
 }
 
 /*
@@ -2629,7 +3533,7 @@ button.btn.warn {
 }
 
 /*
- * The dragged card is positioned by transform for the duration, so the 110ms
+ * The dragged card is positioned by transform for the duration, so the var(--t-fast)
  * transform transition has to come off — otherwise the card eases toward the
  * cursor a frame behind and the drag feels like it is on elastic.
  */
@@ -2673,7 +3577,7 @@ button.btn.warn {
 }
 
 .gcard .gsub {
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--n10);
   white-space: nowrap;
   overflow: hidden;
@@ -2736,7 +3640,7 @@ button.btn.warn {
 }
 
 .gcard.folder .gname {
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .gcard.folder .grail {
@@ -2764,7 +3668,7 @@ button.btn.warn {
 
 .gcard.symbol .gname {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n12);
 }
 
@@ -2777,6 +3681,28 @@ button.btn.warn {
   border-color: var(--n7);
   --card-body: linear-gradient(180deg, var(--n5) 0%, var(--n3) 100%);
   background-color: var(--n4);
+}
+
+/*
+ * The per-file view: an expanded file and its symbol grid ride on a frosted
+ * plate above the flow, so the neighbours they inevitably overlap in a dense
+ * layout are covered rather than interleaved. The plate is the lowest layer
+ * of the group, the chips and the hub the highest.
+ */
+.symbol-plate {
+  position: absolute;
+  z-index: 2;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--n1) 90%, transparent);
+  border: 1px solid var(--n5);
+  box-shadow: var(--shadow-2);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+.gcard.symbol,
+.gcard.hub {
+  z-index: 3;
 }
 
 /* states */
@@ -2802,7 +3728,9 @@ button.btn.warn {
   right: 0;
   border-width: 0 9px 9px 0;
   border-style: solid;
-  border-color: transparent var(--warn) transparent transparent;
+  /* a data marker on the graph speaks in the signal palette — the chrome
+     --warn is a muddy khaki on the light surface */
+  border-color: transparent var(--sig-warn) transparent transparent;
 }
 
 .gcard.pulse {
@@ -2810,11 +3738,17 @@ button.btn.warn {
 }
 
 @keyframes cardpulse {
+  /*
+   * A glow, not paint. At full-strength --warn the expanding ring read as a
+   * solid amber plate around every fresh card — and on the light palette,
+   * where --warn is a deep khaki, as a brown stain. Half-transparent from the
+   * first frame, it stays an attention flick rather than a surface.
+   */
   0% {
-    box-shadow: 0 0 0 0 var(--warn);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 50%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 14px transparent;
+    box-shadow: 0 0 0 12px transparent;
   }
 }
 
@@ -2839,10 +3773,6 @@ button.btn.warn {
 
 .gcard.faded {
   opacity: 0.22;
-}
-
-.gcard.hiddenNode {
-  display: none;
 }
 
 /* ---------- wheel (radial) view ---------- */
@@ -2913,7 +3843,7 @@ button.btn.warn {
   stroke-width: var(--w, 0.6px);
   stroke-opacity: 0.32;
   stroke-linecap: round;
-  transition: stroke 90ms linear, stroke-opacity 90ms linear, stroke-width 90ms linear;
+  transition: stroke var(--t-fast) linear, stroke-opacity var(--t-fast) linear, stroke-width var(--t-fast) linear;
 }
 
 .wedge.intra {
@@ -2942,12 +3872,26 @@ button.btn.warn {
   stroke-linecap: round;
   opacity: 0.55;
   cursor: pointer;
-  transition: opacity 110ms ease, stroke-width 110ms ease;
+  transition: opacity var(--t-fast) ease, stroke-width var(--t-fast) ease;
 }
 
 .warc:hover path {
   opacity: 1;
   stroke-width: 8;
+}
+
+/* the hairline that ties an arc to its span of the ring */
+.warc-tick {
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.3;
+  pointer-events: none;
+  transition: opacity var(--t-fast) ease;
+}
+
+.warc:hover .warc-tick,
+.warc.collapsed .warc-tick {
+  opacity: 0.65;
 }
 
 .warc.collapsed path {
@@ -2958,7 +3902,7 @@ button.btn.warn {
 .warc-label {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   opacity: 0.85;
   pointer-events: none;
   text-transform: uppercase;
@@ -2973,7 +3917,7 @@ button.btn.warn {
 }
 
 .wnode .dot {
-  transition: opacity 110ms ease;
+  transition: opacity var(--t-fast) ease;
   stroke: var(--n0);
   stroke-width: 0.8;
 }
@@ -3004,7 +3948,7 @@ button.btn.warn {
 }
 
 .wlabel {
-  font-size: 9.5px;
+  font-size: 10px;
   fill: var(--n11);
   cursor: pointer;
   display: none;
@@ -3077,7 +4021,7 @@ button.btn.warn {
 }
 
 .wheel-hub-detail {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n11);
   margin-top: 2px;
   overflow: hidden;
@@ -3140,8 +4084,8 @@ button.btn.warn {
   border-bottom: 1px solid var(--line);
   padding: 7px 10px;
   font: inherit;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
+  font-size: 10px;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   text-align: left;
   color: var(--n9);
@@ -3182,7 +4126,7 @@ button.btn.warn {
   padding: 5px 10px 4px;
   background: var(--n2);
   border-bottom: 1px solid var(--line);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n11);
   cursor: pointer;
 }
@@ -3205,7 +4149,7 @@ button.btn.warn {
 }
 
 .wheel-index-count {
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--n8);
   font-variant-numeric: tabular-nums;
 }
@@ -3215,7 +4159,7 @@ button.btn.warn {
   align-items: center;
   gap: 7px;
   padding: 3px 10px 3px 18px;
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--n11);
   cursor: pointer;
@@ -3343,6 +4287,18 @@ button.btn.warn {
   pointer-events: none;
 }
 
+/* the how-to line surfaces when the pointer is over the district */
+.dblock-howto {
+  display: block;
+  color: var(--n10);
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+
+.dblock.collapsed:hover .dblock-howto {
+  opacity: 1;
+}
+
 .dblock-head {
   display: flex;
   align-items: baseline;
@@ -3351,7 +4307,7 @@ button.btn.warn {
   padding: 2px 6px 0;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   white-space: nowrap;
   overflow: hidden;
@@ -3375,12 +4331,12 @@ button.btn.warn {
 
 .dtile {
   position: absolute;
-  border-radius: 2px;
+  border-radius: var(--r-sm);
   box-sizing: border-box;
   overflow: hidden;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: opacity 110ms ease, border-color 110ms ease;
+  transition: opacity var(--t-fast) ease, border-color var(--t-fast) ease;
 }
 
 .dtile:hover {
@@ -3480,7 +4436,7 @@ button.btn.warn {
   padding: 0 8px 0 9px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
   background: var(--n2);
   border-right: 1px solid var(--n5);
@@ -3490,7 +4446,7 @@ button.btn.warn {
 .legend-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
   margin-right: 2px;
 }
@@ -3507,9 +4463,6 @@ button.btn.warn {
   gap: 10px;
   flex-wrap: wrap;
   max-width: 100%;
-  /* the far end of the toolbar row: the colours are a reference you glance at,
-     not a control you reach for, so they sit out of the way of the switchers */
-  margin-left: auto;
   background: var(--veil);
   border: 1px solid var(--n5);
   border-left: 3px solid var(--accent);
@@ -3640,7 +4593,7 @@ button.btn.warn {
   border-radius: var(--r-lg);
   box-shadow: var(--shadow-3);
   padding: 18px 20px 16px;
-  animation: palette-in 130ms ease-out;
+  animation: palette-in var(--t-med) ease-out;
 }
 
 .help-head {
@@ -3666,7 +4619,7 @@ button.btn.warn {
   margin: 0 0 8px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.09em;
+  letter-spacing: var(--track-caps);
   color: var(--n10);
   border-bottom: 1px solid var(--n5);
   padding-bottom: 5px;
@@ -3688,7 +4641,7 @@ button.btn.warn {
 
 .help-row dt {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n13);
   background: var(--n4);
   border: 1px solid var(--n6);
@@ -3702,7 +4655,7 @@ button.btn.warn {
 
 .help-row dd {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--n11);
 }
@@ -3711,7 +4664,7 @@ button.btn.warn {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--n5);
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n10);
   line-height: 1.5;
 }
@@ -3767,7 +4720,7 @@ button.btn.warn {
   box-shadow: var(--shadow-2);
   padding: 4px;
   font-size: 12px;
-  animation: palette-in 90ms ease-out;
+  animation: palette-in var(--t-fast) ease-out;
 }
 
 .menu-dropdown.submenu {
@@ -3837,7 +4790,7 @@ button.btn.warn {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--n9);
-  font-size: 10.5px;
+  font-size: 10px;
 }
 
 .menu-item.active .menu-hint,
@@ -3908,13 +4861,47 @@ button.btn.warn {
   border-bottom: 1px solid var(--n3);
   background: var(--n2);
   color: var(--n11);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
 .review-note b {
   color: var(--n12);
   font-weight: 600;
+}
+
+/*
+ * The three panel explanations (review, board, channel) are dismissible — a
+ * ✕ on the right, remembered per machine. See HintNote.
+ */
+.review-note,
+.board-hint-row,
+.channel-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.hint-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint-dismiss {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 11px;
+  line-height: inherit;
+  color: var(--ink-faint);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.hint-dismiss:hover {
+  color: var(--ink);
 }
 
 .review-head-stats {
@@ -3953,7 +4940,7 @@ button.btn.warn {
 .rh-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n10);
   margin-right: 8px;
 }
@@ -4060,7 +5047,7 @@ button.btn.warn {
 }
 
 .smell-chip {
-  font-size: 9.5px;
+  font-size: 10px;
   padding: 1px 5px;
   border-radius: var(--r-sm);
   background: var(--n3);
@@ -4091,7 +5078,7 @@ button.btn.warn {
   margin-right: 6px;
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-caps);
 }
 
 .intent-ruled {
@@ -4106,7 +5093,7 @@ button.btn.warn {
 }
 
 .burst-evidence {
-  font-size: 11.5px;
+  font-size: 11px;
   border-radius: var(--r-md);
   padding: 7px 10px;
   background: var(--n2);
@@ -4147,9 +5134,9 @@ button.btn.warn {
 }
 
 .check-outcome {
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-caps);
   padding: 1px 5px;
   border-radius: var(--r-sm);
   background: var(--n3);
@@ -4172,7 +5159,7 @@ button.btn.warn {
 .check-evidence {
   width: 100%;
   color: var(--n10);
-  font-size: 10.5px;
+  font-size: 10px;
   padding-left: 4px;
   border-left: 2px solid var(--n5);
   margin-top: 2px;
@@ -4198,7 +5185,7 @@ button.btn.warn {
 }
 
 .smell-detail {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n11);
   line-height: 1.45;
   margin: 3px 0 4px;
@@ -4211,7 +5198,7 @@ button.btn.warn {
 }
 
 .smell-paths .deplink {
-  font-size: 10.5px;
+  font-size: 10px;
   background: var(--n3);
   border-radius: var(--r-sm);
   padding: 1px 5px;
@@ -4238,7 +5225,7 @@ button.btn.warn {
   gap: 8px;
   padding: 3px 6px;
   border-radius: var(--r-md);
-  font-size: 11.5px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -4250,14 +5237,18 @@ button.btn.warn {
   opacity: 0.55;
 }
 
+/*
+ * The tier speaks once per row, quietly. This was an uppercase amber outline
+ * chip, and four of them stacked in a burst read as four alarms — the row's
+ * severity is a sorting fact, not a warning light, so it is a tinted label at
+ * text size and the group header above already says how many need care.
+ */
 .tier-badge {
   flex: 0 0 auto;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 1px 5px;
+  font-size: 10px;
+  padding: 1px 6px;
   border-radius: var(--r-sm);
-  border: 1px solid var(--n6);
+  background: var(--n3);
   color: var(--n10);
   cursor: help;
   white-space: nowrap;
@@ -4265,13 +5256,12 @@ button.btn.warn {
 
 .tier-badge.careful {
   color: var(--crit);
-  border-color: var(--crit-line);
   background: var(--crit-wash);
 }
 
 .tier-badge.read {
   color: var(--warn);
-  border-color: var(--warn-line);
+  background: var(--warn-wash);
 }
 
 .brow-path {
@@ -4288,7 +5278,7 @@ button.btn.warn {
 
 .brow-reasons {
   color: var(--n10);
-  font-size: 10.5px;
+  font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4314,6 +5304,31 @@ button.btn.warn {
 .row-btn.danger:hover {
   color: var(--crit-soft);
   border-color: var(--crit);
+}
+
+/*
+ * Row actions show when the row is in play, not before.
+ *
+ * A review burst repeats diff · revert · dismiss on every one of its rows and
+ * a board lane carries ‹ › ✕ even while empty — at rest that is a wall of
+ * eighteen buttons nobody is about to press. They stay in the layout (nothing
+ * reflows, and the keyboard still reaches them via :focus-within), they just
+ * wait for the pointer to arrive.
+ */
+.brow .row-btn,
+.lane-head .row-btn,
+.issue-copy {
+  opacity: 0;
+  transition: opacity var(--t-fast) ease;
+}
+
+.brow:hover .row-btn,
+.brow:focus-within .row-btn,
+.lane-head:hover .row-btn,
+.lane:focus-within .lane-head .row-btn,
+.issue:hover .issue-copy,
+.issue-copy:focus-visible {
+  opacity: 1;
 }
 
 /* ---------- walkthrough bar ---------- */
@@ -4374,9 +5389,9 @@ button.btn:disabled {
 .cmd-kind {
   flex: 0 0 auto;
   width: 68px;
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
   cursor: help;
 }
@@ -4404,7 +5419,7 @@ button.btn:disabled {
 
 .cmd-outcome {
   flex: 0 0 auto;
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
   padding: 0 5px;
   border-radius: var(--r-sm);
@@ -4460,7 +5475,7 @@ button.btn:disabled {
   /* every row starts unread, so this is a quiet marker that fades away as you
     work rather than a badge competing with the tier */
   flex: 0 0 auto;
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--warn-line);
   cursor: help;
 }
@@ -4478,7 +5493,7 @@ button.btn:disabled {
   background-image:
     linear-gradient(
       90deg,
-      color-mix(in srgb, var(--lens, transparent) calc(var(--lens-intensity, 0) * 34%), transparent) 0%,
+      color-mix(in srgb, var(--lens, transparent) calc(var(--lens-intensity, 0) * var(--lens-tint-max)), transparent) 0%,
       transparent 62%
     ),
     var(--card-body);
@@ -4489,7 +5504,7 @@ button.btn:disabled {
   background-image:
     linear-gradient(
       90deg,
-      color-mix(in srgb, var(--lens, transparent) calc(var(--lens-intensity, 0) * 55%), transparent) 0%,
+      color-mix(in srgb, var(--lens, transparent) calc(var(--lens-intensity, 0) * var(--lens-tint-far)), transparent) 0%,
       color-mix(in srgb, var(--lens, transparent) calc(var(--lens-intensity, 0) * 18%), transparent) 100%
     ),
     var(--card-body);
@@ -4516,7 +5531,7 @@ button.btn:disabled {
 .board-title {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   color: var(--n11);
 }
 
@@ -4529,7 +5544,7 @@ button.btn:disabled {
   background: var(--n3);
   border-radius: var(--r-sm);
   padding: 0 4px;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--accent-soft);
 }
 
@@ -4545,7 +5560,7 @@ button.btn:disabled {
   background: var(--n3);
   border-radius: var(--r-sm);
   padding: 0 4px;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--accent-soft);
 }
 
@@ -4572,8 +5587,8 @@ button.btn:disabled {
   color: var(--ink-muted);
   cursor: pointer;
   transition:
-    background 120ms ease,
-    color 120ms ease;
+    background var(--t-fast) ease,
+    color var(--t-fast) ease;
 }
 
 .collab-nav-tab:hover {
@@ -4620,7 +5635,7 @@ button.btn:disabled {
   align-items: flex-start;
   gap: 12px;
   max-width: 980px;
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--ink-muted);
 }
@@ -4681,7 +5696,7 @@ button.btn:disabled {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-caps);
   padding: 2px 6px;
   border-radius: 999px;
   background: var(--n4);
@@ -4705,7 +5720,7 @@ button.btn:disabled {
 }
 
 .collab-meta {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--ink-faint);
   white-space: nowrap;
 }
@@ -4720,7 +5735,7 @@ button.btn:disabled {
 .collab-alt,
 .collab-blocks,
 .collab-verdict {
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--ink-muted);
 }
@@ -4797,7 +5812,7 @@ button.btn:disabled {
   border-radius: var(--r-md);
   background: var(--bg-raised);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .routine-rule:hover {
@@ -4812,7 +5827,7 @@ button.btn:disabled {
 .routine-rule .sub {
   display: block;
   margin-top: 3px;
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--ink-muted);
 }
@@ -4890,7 +5905,7 @@ button.btn:disabled {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.55;
   color: var(--ink-2);
   white-space: pre-wrap;
@@ -4905,7 +5920,7 @@ button.btn:disabled {
 /* what gets bolted on to whatever is in the editor above */
 .routine-appendix {
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--ink-muted);
 }
 
@@ -4934,14 +5949,20 @@ button.btn:disabled {
   align-items: stretch;
 }
 
+/*
+ * Lanes are trays, cards are the raised things in them. The board used to
+ * draw both on the same surface with the same hairline, so nothing sat on
+ * anything — a lane is a step below the panel now, and a card a step above.
+ */
 .lane {
   flex: 0 0 292px;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--n1);
-  border: 1px solid var(--n4);
+  background: var(--n0);
+  border: 1px solid var(--line-faint);
   border-radius: var(--r-lg);
+  box-shadow: inset 0 1px 0 var(--wash);
 }
 
 .lane.dropping {
@@ -4987,11 +6008,13 @@ button.btn:disabled {
 .lane-add {
   flex: 0 0 auto;
   background: transparent;
-  border: 1px dashed var(--n6);
+  /* quiet at rest: four dashed boxes shouting "+ Task" across an empty board
+     was most of what the board said */
+  border: 1px dashed var(--line-faint);
   border-radius: var(--r-md);
-  color: var(--n10);
+  color: var(--ink-faint);
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 11px;
   padding: 6px;
   cursor: pointer;
 }
@@ -5006,15 +6029,34 @@ button.btn:disabled {
   background: linear-gradient(180deg, var(--n3) 0%, var(--n2) 100%);
   border: 1px solid var(--n5);
   border-radius: var(--r-md);
-  padding: 8px 9px;
+  padding: 9px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   cursor: grab;
+  box-shadow: inset 0 1px 0 var(--card-sheen), var(--shadow-card);
+  transition:
+    box-shadow var(--t-fast) ease,
+    border-color var(--t-fast) ease;
 }
 
 .task-card:hover {
   border-color: var(--n7);
+  box-shadow: inset 0 1px 0 var(--card-sheen), var(--shadow-card-hover);
+}
+
+/* a card saved as a draft: kept for you, never handed to an agent */
+.task-draft {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warn-wash);
+  color: var(--warn);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  vertical-align: 1px;
 }
 
 .task-card.editing {
@@ -5023,7 +6065,7 @@ button.btn:disabled {
 }
 
 .task-title {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--n13);
   font-weight: 600;
   line-height: 1.35;
@@ -5056,7 +6098,7 @@ button.btn:disabled {
 }
 
 .task-notes {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n10);
 }
 
@@ -5126,7 +6168,7 @@ button.btn:disabled {
   border-radius: var(--r-md);
   color: var(--n13);
   padding: 5px 7px;
-  font-size: 11.5px;
+  font-size: 11px;
   font-family: inherit;
   outline: none;
   resize: vertical;
@@ -5137,7 +6179,7 @@ button.btn:disabled {
 }
 
 .task-input.title {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -5147,7 +6189,7 @@ button.btn:disabled {
   border-top: 1px solid var(--n4);
   border-radius: 0;
   padding: 4px 0 0;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n11);
 }
 
@@ -5227,6 +6269,59 @@ button.btn:disabled {
 
 /*
  * ---------------------------------------------------------------------------
+ * Density
+ * ---------------------------------------------------------------------------
+ * Compact takes the frame — bars, tabs, rows, buttons — one step tighter and
+ * leaves content type alone. Set from View → Density; the default is the
+ * design as tuned, and this block is the entire difference.
+ */
+:root[data-density='compact'] body {
+  font-size: 12px;
+}
+
+:root[data-density='compact'] .topbar {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+:root[data-density='compact'] .view-tab {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+:root[data-density='compact'] .file-tabs .tab {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+:root[data-density='compact'] .lens-btn {
+  padding: 3px 7px;
+  font-size: 10px;
+}
+
+:root[data-density='compact'] .filetree .row {
+  min-height: 19px;
+}
+
+:root[data-density='compact'] .statusbar {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  font-size: 10px;
+}
+
+:root[data-density='compact'] .review-head,
+:root[data-density='compact'] .board-head {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+:root[data-density='compact'] button.btn {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/*
+ * ---------------------------------------------------------------------------
  * Per-platform adjustments
  * ---------------------------------------------------------------------------
  * Only where the platforms genuinely differ. Everything else is deliberately
@@ -5271,7 +6366,7 @@ button.btn:disabled {
 :root[data-os='linux'] .legend-label,
 :root[data-os='linux'] .explorer-title,
 :root[data-os='linux'] .health-cap {
-  letter-spacing: 0.09em;
+  letter-spacing: var(--track-caps);
 }
 
 /*
@@ -5333,7 +6428,7 @@ button.btn:disabled {
 
 .start-tag {
   margin: 3px 0 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--n9);
 }
 
@@ -5409,7 +6504,7 @@ button.btn:disabled {
 
 .start-note {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.6;
   color: var(--n9);
 }
@@ -5419,7 +6514,7 @@ button.btn:disabled {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
 }
 
@@ -5480,7 +6575,7 @@ button.btn:disabled {
 }
 
 .start-when {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n8);
   white-space: nowrap;
 }
@@ -5515,9 +6610,26 @@ button.btn:disabled {
  * other two are config files, in different formats, in different places.
  */
 .mcp-btn {
-  margin-left: auto;
   font-size: 11px;
   padding: 2px 9px;
+}
+
+/* the seam between the shells and the things about them */
+.tt-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 6px;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.tt-hint {
+  color: var(--ink-faint);
+  font-size: 11px;
+  margin-right: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mcp-btn.on {
@@ -5526,47 +6638,92 @@ button.btn:disabled {
   color: var(--accent-pale);
 }
 
-.mcp-connect {
-  flex: 0 1 auto;
-  /*
-   * Never take more than half the panel, and scroll rather than push.
-   *
-   * It used to be flex:0 0 auto with no ceiling, so on a short terminal panel
-   * the opencode snippet — nine lines of JSON — squeezed the terminal to
-   * nothing, with no way to scroll and nothing left to paste into.
-   */
-  max-height: 50%;
+/*
+ * Connecting an agent, as a dialog.
+ *
+ * It was a strip above the terminal, capped at half the panel and scrolling —
+ * which meant the opencode snippet alone filled it, and the part that matters
+ * most, the sentence you paste into the agent afterwards, had nowhere to go.
+ * A dialog has room for both steps and gives the terminal its height back.
+ */
+.mcp-modal {
+  width: min(720px, 92vw);
+  max-height: 86vh;
   overflow-y: auto;
-  padding: 8px 10px 10px;
-  border-bottom: 1px solid var(--line-faint);
-  background: var(--n1);
+  gap: 12px;
 }
 
-.mcp-row {
+.mcp-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 7px;
+}
+
+.mcp-head h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.mcp-endpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .mcp-cap {
   flex: 0 0 auto;
-  width: 62px;
-  font-size: 9.5px;
+  font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
 }
 
 .mcp-url {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 2px 8px;
+  font-size: 11px;
+  padding: 3px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--n2);
   color: var(--accent-soft);
   user-select: all;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* two steps, and they are genuinely two: a config change you make once per
+   machine, and a message you send every session */
+.mcp-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-faint);
+}
+
+.mcp-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--ink-1);
+}
+
+.mcp-num {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--n3);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mcp-targets {
@@ -5576,8 +6733,14 @@ button.btn:disabled {
 
 .mcp-where {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--n8);
+}
+
+.mcp-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-muted);
 }
 
 .mcp-snippet {
@@ -5588,11 +6751,21 @@ button.btn:disabled {
   background: var(--n0);
   color: var(--n11);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.55;
   white-space: pre;
   overflow-x: auto;
   user-select: all;
+}
+
+/* the opening message is prose, not a config blob: wrap it rather than making
+   someone scroll a sentence sideways */
+.mcp-snippet.prompt {
+  white-space: pre-wrap;
+  overflow-x: visible;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 12px;
 }
 
 /* the mark beside a dialog title, where the dialog is the app speaking */
@@ -5636,7 +6809,7 @@ button.btn:disabled {
   border-bottom: 1px solid var(--line-faint);
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--track-caps);
   color: var(--n9);
 }
 
@@ -5658,7 +6831,7 @@ button.btn:disabled {
   cursor: pointer;
   font: inherit;
   font-size: 10px;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   writing-mode: vertical-rl;
   transform: rotate(180deg);
@@ -5797,7 +6970,7 @@ button.btn:disabled {
   padding: 0;
   background: none;
   color: var(--n11);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -5942,6 +7115,28 @@ button.btn:disabled {
 }
 
 /*
+ * A split pair: the action and its "…and everything that imports them" half.
+ * One capsule, so eight peer buttons become four groups the eye can count.
+ */
+.bulk-group {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.bulk-group .btn {
+  border-radius: 0;
+}
+
+.bulk-group .btn:first-child {
+  border-radius: 999px 0 0 999px;
+  border-right-width: 0;
+}
+
+.bulk-group .btn:last-child {
+  border-radius: 0 999px 999px 0;
+}
+
+/*
  * How much bigger the set gets — part of the label, not a tooltip.
  *
  * "+37" beside "Copy connected" is the difference between an action you take
@@ -6022,7 +7217,7 @@ button.btn:disabled {
 
 .conn-detail {
   max-width: 62ch;
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.65;
   color: var(--n9);
 }
@@ -6033,7 +7228,7 @@ button.btn:disabled {
 
 .conn-detail code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n11);
 }
 
@@ -6092,7 +7287,7 @@ button.btn:disabled {
   gap: 8px;
   padding: 5px 10px;
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: 12px;
   border-bottom: 1px solid var(--n2);
 }
 
@@ -6114,8 +7309,8 @@ button.btn:disabled {
 }
 
 .picker-tag {
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
+  font-size: 10px;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   color: var(--accent);
   border: 1px solid var(--n5);
@@ -6154,7 +7349,17 @@ button.btn:disabled {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  /*
+   * Above the corner alerts, which is the whole point of a modal.
+   *
+   * It used to sit below them at 60, so an alert queue in the bottom-right
+   * floated over the dialog and swallowed the clicks on whatever was under it
+   * — reliably the Save button, which is where a dialog puts its primary
+   * action. The backdrop already covers the screen and stops everything
+   * behind it; the one thing that could still reach through it was the layer
+   * that draws outside the backdrop.
+   */
+  z-index: 200;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6164,13 +7369,15 @@ button.btn:disabled {
 
 .modal {
   background: var(--n1);
-  border: 1px solid var(--n4);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-3);
-  padding: 18px 20px;
+  border: 1px solid var(--n5);
+  border-radius: 14px;
+  /* a sheet over the app: the deepest shadow, and a hairline of light along
+     the top edge so it reads as lifted rather than cut out */
+  box-shadow: inset 0 1px 0 var(--card-sheen), var(--shadow-3);
+  padding: 22px 24px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .modal h2 {
@@ -6199,7 +7406,7 @@ button.btn:disabled {
 
 .new-project-target {
   margin: 0;
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--n8);
   overflow-wrap: anywhere;
 }
@@ -6237,7 +7444,7 @@ button.btn:disabled {
   text-align: center;
   pointer-events: none;
   color: var(--n9);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -6384,14 +7591,11 @@ button.btn:disabled {
 }
 
 .legend.folded-away {
-  /* nothing but the summary and the chevron, so the graph gets the room */
+  /* put away: nothing but the summary row and the chevron */
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  width: auto;
-  min-width: 0;
-  max-height: none;
-  overflow: visible;
+  padding: 5px 9px 5px 7px;
 }
 
 /* ---------------------------------------------------------------
@@ -6476,7 +7680,7 @@ button.btn:disabled {
   width: 100%;
   border-radius: 1px;
   opacity: 0.55;
-  transition: opacity 90ms ease;
+  transition: opacity var(--t-fast) ease;
 }
 
 .bs-tick:hover .bs-bar {
@@ -6744,7 +7948,12 @@ button.btn:disabled {
   padding-top: 8px;
 }
 
-/* the head has to hold the strip as well now, so the counts lose their air */
+/*
+ * The head holds the strip as well now, so the counts lose some air — but
+ * not their labels. "1 1 1" in three colours was a legend-only display: the
+ * numbers kept their meaning in a tooltip nobody asks for. The words are
+ * eight characters; the row can afford them.
+ */
 .review-head-stats.compact {
   gap: 10px;
 }
@@ -6754,7 +7963,7 @@ button.btn:disabled {
 }
 
 .review-head-stats.compact .rh-label {
-  display: none;
+  margin-right: 0;
 }
 
 /* ---------------------------------------------------------------
@@ -7020,9 +8229,27 @@ button.btn:disabled {
  * Capped against the viewport so it stays a sheet on a laptop.
  */
 .modal.task-modal {
-  width: min(720px, 100%);
-  max-height: min(760px, 90vh);
-  gap: 12px;
+  width: min(760px, 100%);
+  max-height: min(780px, 90vh);
+  gap: 14px;
+}
+
+/* the question a click-out asks when there is text on the table */
+.tm-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  color: var(--warn-soft);
+  animation: palette-in var(--t-fast) ease-out;
+}
+
+.tm-confirm-text {
+  font-weight: 600;
 }
 
 .tm-head {
@@ -7055,7 +8282,7 @@ button.btn:disabled {
 
 .tm-label {
   font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-caps);
   text-transform: uppercase;
   color: var(--n9);
   margin-top: 6px;
@@ -7124,7 +8351,7 @@ button.btn:disabled {
   color: var(--n8);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 90ms linear;
+  transition: opacity var(--t-fast) linear;
 }
 
 .task-card:hover .task-expand,
@@ -7195,6 +8422,22 @@ button.btn:disabled {
   border-color: var(--good-line);
 }
 
+/* a heartbeat that is on, beats — gently enough to ignore */
+.hb-chip.on [data-testid='heartbeat-label'] {
+  animation: hb-beat 2.4s ease-in-out infinite;
+}
+
+@keyframes hb-beat {
+  0%,
+  70%,
+  100% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 0.55;
+  }
+}
+
 .hb-chip:hover {
   color: var(--n13);
 }
@@ -7238,4 +8481,843 @@ button.btn:disabled {
 .routine-timer select:focus {
   outline: none;
   border-color: var(--accent-line);
+}
+
+
+/* ---------------------------------------------------------------
+   Several agents at once: the room, and what they said
+   --------------------------------------------------------------- */
+
+/*
+ * A file an agent has said in the channel it is taking.
+ *
+ * Every other agent mark on the canvas is retrospective — who wrote this, who
+ * wrote it twice. This is the one that is about the next few minutes, so it
+ * gets the card's edge as well as a badge: at the zoom where you are reading
+ * the shape of a directory the badge is gone and the edge is not.
+ */
+.gcard.claimed {
+  box-shadow: inset 2px 0 0 var(--agent, var(--accent));
+}
+
+.gcard .gb.held {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px currentColor;
+  padding: 1px 3px;
+  font-size: 8px;
+}
+
+/* two agents heading for the same file: the same split the contested dot uses,
+   one step earlier — before either of them has written anything */
+.gcard .gb.held.clash {
+  color: var(--n1);
+  box-shadow: 0 0 0 1px var(--warn-dim);
+}
+
+.dtile.claimed {
+  outline: 1px solid var(--agent, var(--accent));
+  outline-offset: -1px;
+}
+
+/* outside the change ring: "somebody is in here now" and "nobody has read
+   this yet" are routinely both true of one file */
+.wnode .claimring {
+  fill: none;
+  stroke-width: 1.2;
+  stroke-dasharray: 3 2;
+  opacity: 0.9;
+}
+
+/* ---- who did what, in the review head ---- */
+
+.review-agents {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.review-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.review-agent:hover {
+  border-color: var(--agent);
+  color: var(--ink-1);
+}
+
+/* the pressed state is the filter being on, so it has to read as a state
+   rather than as a hover that stuck */
+.review-agent.on {
+  border-color: var(--agent);
+  color: var(--ink-1);
+  box-shadow: inset 0 0 0 1px var(--agent);
+}
+
+.review-agent-mark {
+  color: var(--agent);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.review-agent-files {
+  color: var(--n10);
+  font-variant-numeric: tabular-nums;
+}
+
+.review-agent-unver {
+  color: var(--crit);
+  font-variant-numeric: tabular-nums;
+}
+
+/* what the agent was doing, beside who it was — the half that truncates */
+.burst-doing {
+  color: var(--n10);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+/* ---------------------------------------------------------------
+   The Channel tab: what the agents are telling each other
+   --------------------------------------------------------------- */
+
+.channel-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-base);
+}
+
+.channel-note {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-faint);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.channel-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-faint);
+  flex: 0 0 auto;
+}
+
+.ch-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.ch-num {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-num.warn {
+  color: var(--warn);
+}
+
+.ch-num.crit {
+  color: var(--crit);
+}
+
+.ch-label {
+  font-size: 11px;
+  color: var(--n9);
+}
+
+/* the number that says whether the rest of this panel means anything */
+.ch-coverage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.ch-coverage b.good {
+  color: var(--good);
+}
+
+.ch-coverage b.warn {
+  color: var(--warn);
+}
+
+.ch-coverage b.crit {
+  color: var(--crit);
+}
+
+.ch-quiet-btn {
+  border: none;
+  background: var(--n3);
+  color: var(--ink-2);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.ch-quiet-btn:hover {
+  background: var(--n4);
+  color: var(--ink-1);
+}
+
+/*
+ * The only warning in Flare that arrives before the writes.
+ * Loud enough to interrupt, because after both of them have written there is
+ * nothing left to decide.
+ */
+.channel-clash {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 14px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--warn-dim);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-md);
+  background: var(--warn-bg);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.channel-clash-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.channel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.channel-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.channel-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.ch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ch-chip:hover {
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+.ch-chip.on {
+  color: var(--ink-1);
+  border-color: var(--accent-line);
+  background: var(--accent-bg);
+}
+
+.ch-chip.agent.on {
+  border-color: var(--agent);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--agent);
+}
+
+.ch-chip-mark {
+  color: var(--agent);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.ch-search {
+  background: var(--n2);
+  color: var(--ink-1);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 7px;
+  width: 150px;
+}
+
+.ch-search:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.channel-feed {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 16px;
+}
+
+/*
+ * A conversation, not a log.
+ *
+ * Bubbles rather than rows, an avatar per turn, consecutive lines from one
+ * speaker grouped under one name, and your own posts on the right — the
+ * grammar everyone already reads without being told. It matters here more
+ * than it would in a chat app, because the thing being read is *whether the
+ * agents are talking to each other*, and a wall of identically-formatted
+ * entries is exactly what hides that.
+ */
+.chat-turn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.chat-turn.grouped {
+  /* a continued turn keeps the indent and loses the gap */
+  margin-top: -4px;
+}
+
+.chat-turn.mine {
+  flex-direction: row-reverse;
+  margin-left: auto;
+}
+
+/*
+ * The agent's mark, not its initials.
+ *
+ * Flare speaks in geometry — ◆ Graph, ◈ Insights, ◇ Channel, ▣ taken — so an
+ * agent gets a shape too, assigned with its colour and never apart from it.
+ * Drawn rather than filled into a disc: a bare mark in the agent's colour
+ * sits in the same register as the rest of the app, where a coloured avatar
+ * bubble would be the loudest thing on a page of thin lines.
+ */
+.chat-mark {
+  flex: 0 0 18px;
+  width: 18px;
+  margin-top: 3px;
+  color: var(--agent);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+}
+
+.chat-bubble {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px 7px;
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-faint);
+}
+
+.chat-turn:not(.mine) .chat-bubble {
+  border-top-left-radius: 3px;
+}
+
+.chat-turn.mine .chat-bubble {
+  border-top-right-radius: 3px;
+  background: var(--accent-bg);
+  border-color: var(--accent-line);
+}
+
+.chat-turn.grouped .chat-bubble {
+  border-top-left-radius: var(--r-md);
+  border-top-right-radius: var(--r-md);
+}
+
+/* the two kinds the graph reads carry a tint the others do not */
+.chat-bubble.taking {
+  border-left: 2px solid var(--agent);
+}
+
+.chat-bubble.done {
+  border-left: 2px solid var(--good);
+}
+
+.chat-bubble.asking {
+  border-left: 2px solid var(--warn);
+}
+
+.chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.chat-from {
+  color: var(--agent, var(--ink-1));
+  font-weight: 650;
+}
+
+.chat-turn.mine .chat-from {
+  color: var(--ink-1);
+}
+
+.chat-to {
+  color: var(--ink-muted);
+}
+
+.chat-kind {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--n3);
+  color: var(--n10);
+}
+
+.chat-kind.taking {
+  background: var(--accent-bg);
+  color: var(--accent-pale);
+}
+
+.chat-kind.done {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.chat-kind.asking {
+  background: var(--warn-bg);
+  color: var(--warn-soft);
+}
+
+.chat-time {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--n9);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* the files a turn is about, inline in the bubble */
+.chat-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-path {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--n2);
+  color: var(--ink-2);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-path:hover {
+  background: var(--n4);
+  color: var(--ink-1);
+}
+
+.chat-text {
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Everything in this room is a claim, and Flare is the only participant that
+ * watched what followed. So a line about files opens: the collapsed state
+ * carries the one number worth glancing at (how many of the files it named it
+ * actually wrote), and the open state says what happened to each of them —
+ * including anyone who wrote one of them afterwards, which is the crossing
+ * this message is the natural place to find.
+ */
+.chat-more {
+  border: 0;
+  background: transparent;
+  color: var(--n9);
+  font: inherit;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chat-more:hover {
+  background: var(--n3);
+  color: var(--ink-2);
+}
+
+.chat-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--line);
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+.chat-fact-time {
+  color: var(--n9);
+}
+
+.chat-fact.good {
+  color: var(--good);
+}
+
+.chat-fact.warn {
+  color: var(--warn);
+}
+
+.chat-fact a {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.channel-compose {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line-faint);
+  flex: 0 0 auto;
+}
+
+.channel-compose .collab-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-kind-pick,
+.chat-to-pick {
+  background: var(--n2);
+  color: var(--ink-2);
+  border: 1px solid var(--n5);
+  border-radius: var(--r-sm);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 5px;
+}
+
+.chat-kind-pick:focus,
+.chat-to-pick:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+/* ---- who is here, down the side ---- */
+
+.channel-side {
+  flex: 0 0 268px;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--line-faint);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.channel-side-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--n9);
+}
+
+.channel-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--agent);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.channel-agent.gone {
+  opacity: 0.55;
+}
+
+.channel-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.agent-mark {
+  color: var(--agent);
+  font-size: 10px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.agent-name {
+  color: var(--ink-1);
+  font-weight: 650;
+}
+
+.agent-presence {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--n9);
+}
+
+.agent-presence.working {
+  color: var(--good);
+}
+
+.agent-presence.idle {
+  color: var(--warn-soft);
+}
+
+.channel-agent-doing {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.channel-agent-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--n9);
+}
+
+.channel-agent-facts .warn {
+  color: var(--warn);
+}
+
+.agents-url {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: var(--r-sm);
+  background: var(--n2);
+  color: var(--ink-2);
+  font-size: 11px;
+  user-select: text;
+}
+
+/* ---------------------------------------------------------------
+   The session as the agents tell it, over the diff it produced
+   --------------------------------------------------------------- */
+
+.story {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.story-toggle {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--n9);
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.story-toggle:hover {
+  color: var(--ink-2);
+}
+
+.story-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--agent);
+  border-radius: var(--r-md);
+  background: var(--bg-raised);
+}
+
+.story-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.story-mark {
+  color: var(--agent);
+  font-size: 10px;
+}
+
+.story-who {
+  color: var(--agent);
+  font-weight: 650;
+}
+
+.story-headline {
+  color: var(--ink-1);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * How much of the session the prose actually covers.
+ *
+ * The number that decides whether to read the chapters or the bursts: a
+ * summary accounting for 4 of 19 files is a summary about a different session
+ * than the one that happened.
+ */
+.story-coverage {
+  font-size: 10px;
+  color: var(--n9);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.story-coverage.warn {
+  color: var(--warn);
+}
+
+.story-when {
+  font-size: 10px;
+  color: var(--n9);
+  white-space: nowrap;
+}
+
+.story-chapter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line-faint);
+}
+
+.story-chapter.abandoned {
+  opacity: 0.7;
+}
+
+.story-chapter-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.story-title {
+  color: var(--ink-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.story-outcome,
+.story-verdict {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--n3);
+  color: var(--n10);
+}
+
+.story-outcome.partial {
+  background: var(--warn-bg);
+  color: var(--warn-soft);
+}
+
+.story-verdict.passed {
+  background: var(--good-bg);
+  color: var(--good);
+}
+
+.story-verdict.failed {
+  background: var(--crit-bg);
+  color: var(--crit);
+}
+
+.story-detail {
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.story-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+}
+
+/* named in the prose and never touched: work described that did not happen,
+   and the one kind of wrong a reader cannot catch from the diff */
+.story-absent {
+  color: var(--warn);
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+/* what the summary left out — the reason the rest of it is checkable */
+.story-gap {
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  background: var(--warn-bg);
+  color: var(--ink-2);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

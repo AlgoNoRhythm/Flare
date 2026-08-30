@@ -25,7 +25,6 @@ interface Props {
   onOpenDiff(path: string, source: 'head' | { hash: string }): void;
   onSelect(path: string): void;
   onApprove(path: string): void;
-  onFocus(path: string): void;
   /** file a board task about these paths */
   onNewTask(paths: string[]): void;
   onExpandSymbols(path: string): void;
@@ -48,7 +47,6 @@ export function DetailsPanel({
   onOpenDiff,
   onSelect,
   onApprove,
-  onFocus,
   onNewTask,
   onExpandSymbols,
   onCollapseSymbols,
@@ -178,6 +176,11 @@ export function DetailsPanel({
           {metrics ? (
             <span data-testid="risk-score" className={`score-read ${band(metrics.risk)}`}>
               {scoreLabel(metrics.risk)}
+              {/* the same number as a length — a 0–100 score reads faster as
+                  how much of the bar it fills. currentColor keeps the band. */}
+              <span className="meter" aria-hidden="true">
+                <i style={{ width: `${metrics.risk}%` }} />
+              </span>
             </span>
           ) : (
             <span data-testid="risk-score" className="note">
@@ -201,6 +204,10 @@ export function DetailsPanel({
                 ) : (
                   <span className="note"> · self-contained</span>
                 )}
+                {/* under the whole line, so the note stays beside its number */}
+                <span className={`meter score-read ${band(100 - metrics.reuse)}`} aria-hidden="true">
+                  <i style={{ width: `${metrics.reuse}%` }} />
+                </span>
               </span>
             </>
           )}
@@ -213,9 +220,6 @@ export function DetailsPanel({
         </button>
         <button className="btn" onClick={() => onOpenDiff(nodeId, 'head')} data-testid="btn-diff-head">
           Diff vs HEAD
-        </button>
-        <button className="btn" onClick={() => onFocus(nodeId)}>
-          Focus 2-hop
         </button>
         {/* the same action the bulk bar offers for a box-selection, so
             "start work on this" is reachable however you got here */}
@@ -248,9 +252,17 @@ export function DetailsPanel({
         )}
       </div>
 
+      {/*
+        Two of the four sections fold behind their counts, so the panel opens
+        at roughly one screenful. What stays open is what a click on a node is
+        usually *for*: who imports this. Symbols and the outbound imports are
+        the reference material — the count says whether they are worth opening.
+      */}
       {node && node.symbols.length > 0 && (
-        <div className="section">
-          <h4>Symbols</h4>
+        <details className="section">
+          <summary>
+            <h4>Symbols ({node.symbols.length})</h4>
+          </summary>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {node.symbols.slice(0, 20).map((s) => (
               <span
@@ -263,24 +275,30 @@ export function DetailsPanel({
               </span>
             ))}
           </div>
-        </div>
+        </details>
       )}
 
       {details && (
-        <div className="section">
-          <h4>Imported by ({details.dependents.length})</h4>
-          {details.dependents.slice(0, 20).map((d) => (
-            <a key={d} className="deplink mono" onClick={() => onSelect(d)}>
-              {d}
-            </a>
-          ))}
-          <h4 style={{ marginTop: 10 }}>Imports ({details.dependencies.length})</h4>
-          {details.dependencies.slice(0, 20).map((d) => (
-            <a key={d} className="deplink mono" onClick={() => onSelect(d)}>
-              {d}
-            </a>
-          ))}
-        </div>
+        <>
+          <div className="section">
+            <h4>Imported by ({details.dependents.length})</h4>
+            {details.dependents.slice(0, 20).map((d) => (
+              <a key={d} className="deplink mono" onClick={() => onSelect(d)}>
+                {d}
+              </a>
+            ))}
+          </div>
+          <details className="section">
+            <summary>
+              <h4>Imports ({details.dependencies.length})</h4>
+            </summary>
+            {details.dependencies.slice(0, 20).map((d) => (
+              <a key={d} className="deplink mono" onClick={() => onSelect(d)}>
+                {d}
+              </a>
+            ))}
+          </details>
+        </>
       )}
 
       <div className="section">

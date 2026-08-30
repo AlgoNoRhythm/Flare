@@ -144,6 +144,8 @@ async function open(folder) {
   }
 }
 
+await page.getByTestId('lens-menu').click();
+
 await page.getByTestId('lens-activity').click();
 await page.waitForTimeout(500);
 const foldAll = page.getByTestId('legend-fold-all');
@@ -221,8 +223,10 @@ if (await dismiss.count()) {
   await dismiss.click();
   await page.waitForTimeout(800);
 }
+await page.getByTestId('lens-menu').click();
 await page.getByTestId('lens-clusters').click();
 await page.waitForTimeout(300);
+await page.getByTestId('view-menu').click();
 await page.getByTestId('view-wheel').click();
 await page.waitForTimeout(2000);
 await page.keyboard.press('Control+0');

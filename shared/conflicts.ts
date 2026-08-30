@@ -1,4 +1,5 @@
 import type { ChangeBurst } from './activity';
+import { covers, NOTICE_TTL_MS, type ChannelMessage } from './channel';
 import type { TierInput } from './review';
 import type { Decision } from './tasks';
 
@@ -33,6 +34,8 @@ import type { Decision } from './tasks';
  */
 
 export type ConflictKind =
+  /** someone wrote a file another agent had said in the channel it was taking */
+  | 'crossed-notice'
   /** two agents wrote the same file, and we cannot show the lines overlap */
   | 'contested-file'
   /** …and we can: the later agent replaced lines the earlier one had just written */
@@ -107,6 +110,8 @@ export interface ConflictInput {
   nodes?: ReadonlyMap<string, FileShape>;
   /** the board's design decisions, for the contradictory-proposal detector */
   decisions?: readonly Decision[];
+  /** what the agents said to each other this session — see shared/channel.ts */
+  channel?: readonly ChannelMessage[];
   /** conflict ids already dismissed */
   dismissed?: ReadonlySet<string>;
   /** the human counts as an agent too — off, because you editing after an agent is the normal case */
@@ -162,13 +167,40 @@ export function agentLabelOf(burst: ChangeBurst): string {
   return burst.agentLabel ?? burst.agent;
 }
 
+/**
+ * *Who* made it, as opposed to what they were doing.
+ *
+ * Every sentence a conflict produces is about two parties, and "Add OAuth
+ * replaced 12 of the 14 lines Refactor auth wrote" names two pieces of work
+ * rather than two agents. The roster name is the one that reads: **Claude 2
+ * replaced 12 of the 14 lines Claude 1 wrote.** It falls back through the
+ * label to the tool, so bursts from before the roster existed still say
+ * something.
+ */
+export function agentNameOf(burst: ChangeBurst): string {
+  return burst.agentName ?? burst.agentLabel ?? burst.agent;
+}
+
 function partyOf(burst: ChangeBurst): ConflictParty {
-  return { id: agentIdOf(burst), label: agentLabelOf(burst) };
+  return { id: agentIdOf(burst), label: agentNameOf(burst) };
 }
 
 /** An identity we cannot reason about: 'mixed' is "we could not tell", not an agent. */
 function unattributed(id: string): boolean {
   return id === 'mixed' || id === '';
+}
+
+/**
+ * Fold an agent's own sentence into the middle of ours.
+ *
+ * A claim's purpose is written as a standalone line ("Move the port lookup out
+ * of the session"), and reading it back inside "claimed it to Move the port…"
+ * looks like a quotation mark went missing. An acronym is left alone.
+ */
+function lowerFirst(text: string): string {
+  const trimmed = text.trim().replace(/\.$/, '');
+  if (/^[A-Z]{2,}/.test(trimmed)) return trimmed;
+  return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +291,7 @@ export function conflicts(input: ConflictInput): Conflict[] {
     edits,
     nodes,
     decisions,
+    channel,
     dismissed,
     includeHuman = false,
     limit = CONFLICT_LIMIT,
@@ -284,6 +317,71 @@ export function conflicts(input: ConflictInput): Conflict[] {
     if (unattributed(id)) return false;
     return includeHuman || b.agent !== 'you';
   });
+
+  // --- crossed notice ----------------------------------------------------
+  /*
+   * Somebody wrote a file another agent had said in the channel it was taking.
+   *
+   * The one crossing here reported against something an agent *said* rather
+   * than something it did, which makes it the earliest: `contested-file` needs
+   * two writes to exist, so it cannot be raised until the damage is on disk
+   * twice, while this is true the moment the first write lands on top of a
+   * notice.
+   *
+   * Two gates keep it from crying wolf. The writer must be *precisely*
+   * identified — an `mcp:` session or the human — because the weaker rungs of
+   * attribution name an agent by inference, and a crossing reported against a
+   * guess is worse than none. And the notice must have been standing at the
+   * moment of the write: reviewing a burst an hour later should show what was
+   * true when it landed, and a `done` posted since does not un-cross it.
+   */
+  if (channel && channel.length > 0) {
+    const notices = channel.filter((m) => m.kind === 'taking' && m.paths.length > 0);
+    const identified = bursts.filter((b) => {
+      const id = agentIdOf(b);
+      return id === 'you' || id.startsWith('mcp:');
+    });
+    for (const burst of identified) {
+      const writer = agentIdOf(burst);
+      for (const path of burst.changed) {
+        for (const notice of notices) {
+          if (notice.from === writer) continue;
+          if (notice.at > burst.endedAt || burst.endedAt - notice.at > NOTICE_TTL_MS) continue;
+          if (!notice.paths.some((p) => covers(p, path))) continue;
+          // the agent handed it back before this write — no crossing
+          const handedBack = channel.some(
+            (m) =>
+              m.kind === 'done' &&
+              m.from === notice.from &&
+              m.at > notice.at &&
+              m.at <= burst.endedAt &&
+              m.paths.some((p) => covers(p, path) || covers(path, p)),
+          );
+          if (handedBack) continue;
+
+          const human = writer === 'you';
+          const later: ConflictParty = human ? { id: 'you', label: 'You' } : partyOf(burst);
+          const earlier: ConflictParty = { id: notice.from, label: notice.fromName };
+          keep({
+            id: conflictId('crossed-notice', later.id, earlier.id, path),
+            kind: 'crossed-notice',
+            severity: 'warning',
+            at: burst.endedAt,
+            agents: [later, earlier],
+            paths: [path],
+            summary: `${later.label} wrote ${path} after ${earlier.label} said it was taking it`,
+            detail:
+              `${earlier.label} posted in the channel that it was working on ${path}${
+                notice.text ? ` — ${lowerFirst(notice.text)}` : ''
+              }, and ${
+                human ? 'you edited it anyway' : `${later.label} edited it anyway`
+              }. Nothing is blocked here: the channel is how the agents coordinate, not a lock. Both changes are on disk, and whichever landed second is what you have.`,
+            burstIds: [burst.id],
+          });
+        }
+      }
+    }
+  }
 
   // --- contested file / overwritten -------------------------------------
   const lastWrite = new Map<string, Write>();
@@ -531,7 +629,11 @@ export function conflictsFor(all: readonly Conflict[], path: string): Conflict[]
 export function contestedBy(all: readonly Conflict[], path: string): ConflictParty[] {
   const out = new Map<string, ConflictParty>();
   for (const c of all) {
-    if (c.kind !== 'contested-file' && c.kind !== 'overwritten') continue;
+    // a crossed notice is the same shape of fact — two parties, one file — and
+    // the one worth drawing earliest, because it is true before the second write
+    if (c.kind !== 'contested-file' && c.kind !== 'overwritten' && c.kind !== 'crossed-notice') {
+      continue;
+    }
     if (c.paths[0] !== path) continue;
     for (const p of c.agents) out.set(p.id, p);
   }

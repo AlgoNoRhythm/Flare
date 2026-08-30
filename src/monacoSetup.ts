@@ -56,7 +56,17 @@ export function defineEditorTheme(): void {
     // light one; the surfaces below are ours either way
     base: document.documentElement.dataset.theme === 'light' ? 'vs' : 'vs-dark',
     inherit: true,
-    rules: [],
+    rules: [
+      /*
+       * Comments sit below code, not beside it. vs-dark paints them a green
+       * as saturated as the strings around them — in an app whose chrome
+       * whispers, the prose was the loudest thing in the pane. The ramp's
+       * muted ink is what the UI uses for secondary text, so comments read
+       * as secondary here too, in both themes by construction.
+       */
+      { token: 'comment', foreground: t('--n9').replace('#', '') },
+      { token: 'comment.doc', foreground: t('--n9').replace('#', '') },
+    ],
     colors: {
       'editor.background': t('--n1'),
       'editor.lineHighlightBackground': t('--n2'),

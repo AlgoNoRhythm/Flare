@@ -193,16 +193,42 @@ export function riskScore(node: GraphNode, coveragePct?: number): number {
  * violet before a theme change should still be the violet one after it.
  */
 const AGENT_SLOTS = [6, 2, 4, 0, 3];
+
+/**
+ * And which mark. Same index, so an agent's colour and its shape are one
+ * decision: the ▲ agent is always the amber one, on the card, in the review
+ * and in the chat, and neither can drift from the other.
+ *
+ * Shapes rather than initials or numbers because this app already speaks in
+ * geometry — ◆ Graph, ◈ Insights, ◇ Channel, ▣ taken — and because two agents
+ * of the same tool have the same letter and the same digit is meaningless at
+ * a glance. A filled triangle is not a filled square at any size, which a "1"
+ * and a "2" cannot claim. All five are plain BMP geometry with a text
+ * presentation, so they render as marks rather than as emoji.
+ */
+const AGENT_MARKS = ['●', '◆', '▲', '■', '✦'];
 const agentAssignments = new Map<string, number>();
+
+function agentSlot(agent: string): number {
+  let slot = agentAssignments.get(agent);
+  if (slot === undefined) {
+    slot = agentAssignments.size % AGENT_SLOTS.length;
+    agentAssignments.set(agent, slot);
+  }
+  return slot;
+}
 
 export function agentColor(agent: string): string {
   if (agent === 'you' || agent === 'mixed') return neutralSeries();
-  let slot = agentAssignments.get(agent);
-  if (slot === undefined) {
-    slot = AGENT_SLOTS[agentAssignments.size % AGENT_SLOTS.length];
-    agentAssignments.set(agent, slot);
-  }
-  return CATEGORICAL[slot];
+  return CATEGORICAL[AGENT_SLOTS[agentSlot(agent)]];
+}
+
+/** The mark that stands for this agent wherever it is too small for a name. */
+export function agentShape(agent: string): string {
+  // you are not one of the shapes: a hollow circle reads as "not an agent"
+  if (agent === 'you') return '○';
+  if (agent === 'mixed') return '◌';
+  return AGENT_MARKS[agentSlot(agent)];
 }
 
 export { CATEGORICAL, neutralSeries, STATUS };

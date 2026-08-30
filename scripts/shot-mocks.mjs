@@ -37,6 +37,8 @@ for (const name of ['monorepo', 'flat', 'pylib']) {
   // one lens state
   const lens = name === 'pylib' ? 'lens-coverage' : 'lens-risk';
   if ((await page.getByTestId(lens).count()) > 0) {
+    // the lens options unfold from the menu at the canvas's top right
+    await page.getByTestId('lens-menu').click();
     await page.getByTestId(lens).click();
     await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(outDir, `m-${name}-lens.png`) });

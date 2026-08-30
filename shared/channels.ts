@@ -16,6 +16,10 @@ export const EVENT_CHANNELS = [
   'evt:ptyExit',
   'evt:agentStatus',
   'evt:agentCommand',
+  /** the roster of MCP agents and the file claims they hold */
+  'evt:agents',
+  /** an agent wrote down what it did this session */
+  'evt:summaries',
   'evt:commandUpdate',
   'evt:dangerousCommand',
   'evt:activity',

@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useState } from 'react';
 import type { FileTreeNode, GitFileState } from '../../shared/types';
 import { UI_STATUS } from '../theme';
+import { FileGlyph } from './icons';
 
 /**
  * A file-manager glyph per extension family.
@@ -33,7 +34,7 @@ function fileIcon(name: string): { icon: string; kind: string } {
   return { icon: '▪', kind: 'file' };
 }
 
-const STATE_COLOR: Record<GitFileState, string> = {
+export const STATE_COLOR: Record<GitFileState, string> = {
   modified: UI_STATUS.warning,
   added: UI_STATUS.good,
   untracked: UI_STATUS.good,
@@ -51,6 +52,8 @@ interface Props {
   onSelect(path: string): void;
   onToggleSelect(path: string): void;
   onRowContextMenu(payload: { x: number; y: number; path: string; isDir: boolean }): void;
+  /** cluster -> colour, from the graph, so top-level folders echo the map */
+  clusterColors?: Record<string, string>;
 }
 
 /** Lets the explorer header drive the tree without owning every folder's state. */
@@ -97,9 +100,12 @@ function Indent({ depth }: { depth: number }) {
 }
 
 function DirRow(props: RowProps) {
-  const { node, depth, gitFiles, selectedPaths, onToggleSelect, onRowContextMenu, openDirs, onToggleDir } = props;
+  const { node, depth, gitFiles, selectedPaths, onToggleSelect, onRowContextMenu, openDirs, onToggleDir, clusterColors } = props;
   const open = openDirs.has(node.path);
   const hasChangedChild = Object.keys(gitFiles).some((p) => p.startsWith(`${node.path}/`));
+  /* top-level folders wear their cluster's colour off the graph — the tree
+     and the map answering to one vocabulary */
+  const clusterColor = depth === 0 ? clusterColors?.[node.name] : undefined;
   return (
     <>
       <div
@@ -118,7 +124,11 @@ function DirRow(props: RowProps) {
         <span className="chev">{open ? '⌄' : '›'}</span>
         {/* drawn rather than a glyph: a second triangle next to the chevron
             read as two arrows, and emoji folders render differently per OS */}
-        <span className={`folder${open ? ' open' : ''}`} aria-hidden="true" />
+        <span
+          className={`folder${open ? ' open' : ''}`}
+          aria-hidden="true"
+          style={clusterColor ? ({ '--folder-c': clusterColor } as React.CSSProperties) : undefined}
+        />
         <span className="fname">{node.name}</span>
         {!open && hasChangedChild && (
           <span className="dot" style={{ background: UI_STATUS.warning, opacity: 0.7 }} />
@@ -166,7 +176,7 @@ function FileRow(props: RowProps) {
       {/* files have no chevron, but they keep its lane so the icons line up */}
       <span className="chev" />
       <span className={`ficon ${icon.kind}`} title={icon.kind}>
-        {icon.icon}
+        <FileGlyph kind={icon.kind} />
       </span>
       <span className="fname">{node.name}</span>
       {state && <span className="dot" style={{ background: STATE_COLOR[state] }} title={state} />}
