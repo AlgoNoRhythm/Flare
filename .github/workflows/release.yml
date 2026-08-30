@@ -2,7 +2,7 @@ name: Release
 
 # Tag a version to cut a release:
 #
-#   npm version 0.2.0 && git push --follow-tags
+#   npm version 2.0.0 && git push --follow-tags
 #
 # Each platform is built on its own runner, because each has to be: an
 # Electron app carries a native module (@lydell/node-pty), and the prebuild npm
@@ -10,8 +10,13 @@ name: Release
 # would produce a package whose terminal does not open — on someone else's
 # computer, after release.
 #
-# electron-builder uploads to a *draft* GitHub release, so nothing is public
-# until the artifacts are all there and someone has looked at them.
+# One draft release, created *before* the builds start. When every platform
+# job ran `electron-builder --publish always` on its own, four jobs racing to
+# find a draft for the tag each created one — four drafts, one installer in
+# each. Now a single job makes the draft and each platform uploads into it as
+# it finishes, so a platform that is slow (or a runner that never comes) does
+# not hold the others back. Nothing is public until someone publishes the
+# draft.
 
 on:
   push:
@@ -27,8 +32,32 @@ permissions:
   contents: write
 
 jobs:
+  draft:
+    name: Draft release
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: One draft for every platform to upload into
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # idempotent, so a re-run on the same tag reuses the draft it made
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag already exists — uploading into it"
+          else
+            gh release create "$tag" --draft --verify-tag \
+              --title "Flare ${tag#v}" \
+              --notes "Installers are attached as each platform finishes building."
+          fi
+
   build:
     name: ${{ matrix.name }}
+    needs: draft
+    # a dry run skips the draft; the builds still have to happen
+    if: ${{ always() && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       # one platform failing should not throw away the others: a release with
@@ -41,9 +70,10 @@ jobs:
           - name: macOS (Apple silicon)
             os: macos-latest
           # Intel Macs are a separate runner rather than a cross-build, for the
-          # native-module reason above. Pinned: macos-latest is arm64 now.
+          # native-module reason above. macos-13 was retired by GitHub and
+          # queued forever; macos-15-intel is the Intel runner that remains.
           - name: macOS (Intel)
-            os: macos-13
+            os: macos-15-intel
           - name: Linux (x64)
             os: ubuntu-latest
 
@@ -67,15 +97,25 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Package and upload
-        if: ${{ github.event_name == 'push' }}
-        run: npx electron-builder --publish always
+      - name: Package
+        run: npx electron-builder --publish never
+
+      - name: Upload into the draft
+        if: ${{ github.event_name == 'push' || !inputs.dry_run }}
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Package only
-        if: ${{ github.event_name != 'push' }}
-        run: npx electron-builder --publish never
+        # --clobber so re-running a platform replaces its installer rather
+        # than failing on the name; the blockmaps and latest*.yml ride along
+        # for anything that updates itself from the release later
+        run: |
+          shopt -s nullglob
+          files=(release/*.exe release/*.exe.blockmap release/*.zip release/*.dmg release/*.dmg.blockmap release/*.AppImage release/*.deb release/*.tar.gz release/latest*.yml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "nothing packaged for ${{ matrix.name }}" >&2
+            exit 1
+          fi
+          gh release upload "${GITHUB_REF_NAME}" "${files[@]}" --clobber
 
       - name: Keep the installers
         uses: actions/upload-artifact@v4
