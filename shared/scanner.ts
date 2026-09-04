@@ -24,6 +24,16 @@ const DEFAULT_IGNORES = [
   '.idea/',
   '*.min.js',
   '*.map',
+  /*
+   * Logs are output, not source. A dev server or an agent appends to one
+   * continuously, and every append used to arrive as a change: a burst with
+   * nothing to review, a row in the tree between the code, a file the
+   * unread lens painted as work nobody had looked at. Rotated logs (`.log.1`,
+   * `.log.gz`) and a `logs/` folder are the same thing under other names.
+   */
+  '*.log',
+  '*.log.*',
+  'logs/',
 ];
 
 const MAX_FILES = 50_000;

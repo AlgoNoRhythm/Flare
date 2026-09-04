@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   baseSnapshotFor,
+  groupByTier,
   reviewTier,
   sortForReview,
   tierSummary,
@@ -119,5 +120,20 @@ describe('tierSummary', () => {
       '2 to read carefully, 1 to read, 3 to skim',
     );
     expect(tierSummary([])).toBe('nothing to review');
+  });
+});
+
+describe('groupByTier', () => {
+  it('buckets rows worst tier first and leaves empty tiers out', () => {
+    const rows = [
+      { tier: 'skim' as const, path: 'c' },
+      { tier: 'careful' as const, path: 'a' },
+      { tier: 'skim' as const, path: 'd' },
+    ];
+    expect(groupByTier(rows)).toEqual([
+      { tier: 'careful', rows: [{ tier: 'careful', path: 'a' }] },
+      { tier: 'skim', rows: [{ tier: 'skim', path: 'c' }, { tier: 'skim', path: 'd' }] },
+    ]);
+    expect(groupByTier([])).toEqual([]);
   });
 });

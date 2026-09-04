@@ -51,11 +51,22 @@ const MIME: Record<string, string> = {
   '.wasm': 'application/wasm',
 };
 
-/** An RPC call from a browser. */
+/** An RPC call from a browser. Without an `id` it is a notification: no reply. */
 interface Call {
-  id: number;
+  id?: number;
   channel: string;
   args: unknown[];
+}
+
+/**
+ * Nagle's algorithm holds a small write back in case more follows, and a
+ * keystroke is exactly the small write it holds — up to a delayed-ACK's worth
+ * on the far side. `ws` turns it off for the sockets it owns; the two it does
+ * not see are the raw ends of a proxied session, below.
+ */
+function noDelay(socket: Duplex): void {
+  const s = socket as Duplex & { setNoDelay?: (on: boolean) => void };
+  if (typeof s.setNoDelay === 'function') s.setNoDelay(true);
 }
 
 function escapeHtml(text: string): string {
@@ -169,6 +180,7 @@ export class WebUi implements HttpMount {
     const owner = ctx.gateway && slug !== null ? ctx.sessions().find((s) => s.slug === slug) : null;
     if (owner && owner.slug !== ctx.slug) {
       // another process owns this project: hand it the raw socket
+      noDelay(socket);
       pipeUpgrade(req, socket, head, owner.port);
       return;
     }
@@ -191,7 +203,8 @@ export class WebUi implements HttpMount {
       } catch {
         return;
       }
-      if (typeof call?.id !== 'number' || typeof call.channel !== 'string') return;
+      if (typeof call?.channel !== 'string') return;
+      if (call.id !== undefined && typeof call.id !== 'number') return;
       void this.answer(client, call);
     });
   }
@@ -200,8 +213,10 @@ export class WebUi implements HttpMount {
     let frame: string;
     try {
       const result = await this.core?.handle(call.channel, call.args ?? []);
+      if (call.id === undefined) return; // a notification: nobody is waiting
       frame = JSON.stringify({ id: call.id, ok: true, result: result ?? null });
     } catch (err) {
+      if (call.id === undefined) return;
       frame = JSON.stringify({ id: call.id, ok: false, error: (err as Error).message });
     }
     if (client.readyState === client.OPEN) client.send(frame);
@@ -296,6 +311,7 @@ function pipeUpgrade(
   port: number,
 ): void {
   const upstream = net.connect(port, '127.0.0.1', () => {
+    upstream.setNoDelay(true);
     const lines = ['GET /ws HTTP/1.1'];
     for (const [key, value] of Object.entries(req.headers)) {
       for (const one of Array.isArray(value) ? value : [value]) {

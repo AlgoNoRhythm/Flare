@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { agentColor } from '../graph/lenses';
+import { PredictiveEcho, type EchoScreen } from '../terminalEcho';
 import { onThemeChange } from '../theme';
 import { McpConnect } from './McpConnect';
 import type { CommandLogEntry } from '../../shared/types';
@@ -15,7 +16,41 @@ interface TermInstance {
   term: Terminal;
   fit: FitAddon;
   host: HTMLDivElement;
+  echo: PredictiveEcho;
   unsubs: (() => void)[];
+}
+
+/**
+ * What the predictive echo needs to know about the screen: where the cursor
+ * is and how much blank line lies to its right. Read from xterm's buffer at
+ * the moment it asks, which is always right after a write has been parsed.
+ */
+function screenOf(term: Terminal): EchoScreen {
+  return {
+    write: (data, done) => term.write(data, done),
+    look: () => {
+      const buffer = term.buffer.active;
+      const x = buffer.cursorX;
+      const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+      let blankRight = 0;
+      if (line) {
+        for (let i = x; i < term.cols && blankRight < 64; i++) {
+          const cell = line.getCell(i);
+          if (!cell || cell.getWidth() === 0) break;
+          const chars = cell.getChars();
+          if (chars !== '' && chars !== ' ') break;
+          blankRight++;
+        }
+      }
+      return {
+        x,
+        y: buffer.baseY + buffer.cursorY,
+        cols: term.cols,
+        alternate: buffer.type === 'alternate',
+        blankRight,
+      };
+    },
+  };
 }
 
 /**
@@ -231,11 +266,23 @@ export function TerminalPanel({
     term.loadAddon(fit);
     term.open(host);
 
+    /*
+     * Keys are shown before the shell echoes them.
+     *
+     * Served from another machine, a character used to appear one round trip
+     * after it was typed, because the echo was the only thing that drew it.
+     * The echo still goes out for every key — the shell's completion, its
+     * history and whatever agent is running in it all need the raw stream —
+     * but the screen no longer waits for it. It measures the delay itself and
+     * does nothing while the delay is short, so a desktop window is untouched.
+     */
+    const echo = new PredictiveEcho(screenOf(term));
+
     const unsubs: (() => void)[] = [];
     unsubs.push(
       api.on('evt:ptyData', (payload) => {
         const p = payload as { id: string; data: string };
-        if (p.id === id) term.write(p.data);
+        if (p.id === id) echo.output(p.data);
       }),
     );
     unsubs.push(
@@ -266,7 +313,10 @@ export function TerminalPanel({
         // no permission, or no clipboard API — fall through
       }
       if (text === '') text = await api.clipboardRead();
-      if (text !== '') api.ptyWrite(id, text);
+      if (text !== '') {
+        echo.input(text);
+        api.ptyWrite(id, text);
+      }
     };
 
     const copySelection = (): boolean => {
@@ -298,10 +348,13 @@ export function TerminalPanel({
       return true;
     });
 
-    term.onData((data) => api.ptyWrite(id, data));
+    term.onData((data) => {
+      echo.input(data);
+      api.ptyWrite(id, data);
+    });
     term.onResize(({ cols, rows }) => api.ptyResize(id, cols, rows));
 
-    const instance: TermInstance = { id, term, fit, host, unsubs };
+    const instance: TermInstance = { id, term, fit, host, echo, unsubs };
     termsRef.current.set(id, instance);
     setTermIds((ids) => [...ids, id]);
     setActiveId(id);
@@ -320,6 +373,7 @@ export function TerminalPanel({
     if (!inst) return;
     for (const u of inst.unsubs) u();
     void api.ptyDispose(id);
+    inst.echo.dispose();
     inst.term.dispose();
     inst.host.remove();
     termsRef.current.delete(id);

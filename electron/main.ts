@@ -198,9 +198,14 @@ app.whenReady().then(() => {
   });
 
   // one generic forwarder per channel; the list comes from the core, so a new
-  // handler is reachable from the renderer with no edit here
+  // handler is reachable from the renderer with no edit here. Each channel is
+  // reachable both ways: `invoke` for a call that wants its answer, `send`
+  // for one that does not (a keystroke into a terminal).
   for (const channel of core.channels) {
     ipcMain.handle(channel, (_e, ...args: unknown[]) => core?.handle(channel, args));
+    ipcMain.on(channel, (_e, ...args: unknown[]) => {
+      void core?.handle(channel, args).catch(() => undefined);
+    });
   }
 
   createWindow();

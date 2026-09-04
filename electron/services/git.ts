@@ -37,7 +37,16 @@ export function parsePorcelainZ(out: string): Record<string, GitFileState> {
 }
 
 export class GitService {
-  constructor(private root: string) {}
+  /**
+   * @param excluded paths Flare does not track, by the same rules as the scan.
+   * Git knows nothing about them, so a committed log file it saw change would
+   * otherwise sit in the changed list between the source files — a row the
+   * tree does not have and the graph cannot open.
+   */
+  constructor(
+    private root: string,
+    private excluded: (rel: string) => boolean = () => false,
+  ) {}
 
   async isRepo(): Promise<boolean> {
     const r = await runGit(['rev-parse', '--is-inside-work-tree'], { cwd: this.root });
@@ -50,9 +59,11 @@ export class GitService {
       runGit(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: this.root }),
       runGit(['status', '--porcelain=v1', '-z'], { cwd: this.root }),
     ]);
+    const files = parsePorcelainZ(statusRes.stdout);
+    for (const rel of Object.keys(files)) if (this.excluded(rel)) delete files[rel];
     return {
       branch: branchRes.code === 0 ? branchRes.stdout.trim() : '',
-      files: parsePorcelainZ(statusRes.stdout),
+      files,
       isRepo: true,
     };
   }

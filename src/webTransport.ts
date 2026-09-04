@@ -6,9 +6,11 @@ import type { ConnectionState, FlareTransport } from './api';
  *
  * One websocket carries both directions: `{id, channel, args}` out,
  * `{id, ok, result}` back, and unsolicited `{event, payload}` for everything
- * the backend pushes. One connection rather than a POST endpoint plus a
- * separate event stream, because this is meant to survive being forwarded
- * through someone else's proxy, and one thing to forward is easier than three.
+ * the backend pushes. A frame sent without an `id` is a notification: it is
+ * handled and never answered, which is what a keystroke wants. One connection
+ * rather than a POST endpoint plus a separate event stream, because this is
+ * meant to survive being forwarded through someone else's proxy, and one
+ * thing to forward is easier than three.
  *
  * It implements the same `FlareTransport` the Electron preload does, so
  * `createApi` — and therefore the whole app above it — cannot tell the two
@@ -122,20 +124,28 @@ export function createWebTransport(): FlareTransport {
     ws.onerror = () => ws.close();
   };
 
+  const post = (frame: string): void => {
+    if (socket && socket.readyState === WebSocket.OPEN) socket.send(frame);
+    else queued.push(frame);
+  };
+
   const call = (channel: string, args: unknown[]): Promise<unknown> =>
     new Promise((resolve) => {
       const id = nextId++;
       pending.set(id, { settle: resolve });
-      const frame = JSON.stringify({ id, channel, args });
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(frame);
-      else queued.push(frame);
+      post(JSON.stringify({ id, channel, args }));
     });
+
+  const notify = (channel: string, args: unknown[]): void => {
+    post(JSON.stringify({ channel, args }));
+  };
 
   connect();
 
   return {
     kind: 'web',
     invoke: call,
+    notify,
     status: {
       get: () => state,
       subscribe(watcher) {

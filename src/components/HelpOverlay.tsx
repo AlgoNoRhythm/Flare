@@ -47,7 +47,9 @@ const PER_VIEW: Record<GraphViewKind, Row[]> = {
 const GLOBAL: Row[] = [
   { keys: 'V', what: 'swap the pointer tool: move the canvas, or drag to select files' },
   { keys: 'Ctrl + K', what: 'command palette — every command and file' },
+  { keys: 'Ctrl + O', what: 'open a folder as a project' },
   { keys: 'Ctrl + B', what: 'toggle the sidebar' },
+  { keys: 'Alt + W', what: 'close the open editor tab (Ctrl + W as well, in the desktop app)' },
   { keys: 'Ctrl 0 + −', what: 'fit the view, zoom in, zoom out' },
   { keys: 'Enter', what: 'in the search box: jump the graph to the first match' },
   { keys: 'Esc', what: 'collapse expanded symbols and drop the selection' },

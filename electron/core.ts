@@ -147,9 +147,11 @@ export function createCore(options: CoreOptions): Core {
 
   const ptys = new PtyService({
     onData: (id, data) => {
-      // the session reads test verdicts out of this stream
-      session?.noteTerminalOutput(id, data);
+      // the screen first, then the bookkeeping: the session reads test
+      // verdicts out of this stream, and that read should not sit between a
+      // keystroke and its echo
       onEvent('evt:ptyData', { id, data });
+      session?.noteTerminalOutput(id, data);
     },
     onExit: (id, exitCode) => onEvent('evt:ptyExit', { id, exitCode }),
   });

@@ -12,7 +12,7 @@ import {
 } from '../shared/search';
 import * as path from 'node:path';
 import { GraphBuilder } from '../shared/graph';
-import { buildIgnore, parseFileFromDisk, scanProject } from '../shared/scanner';
+import { buildIgnore, isIgnored, parseFileFromDisk, scanProject } from '../shared/scanner';
 import {
   parseJsonc,
   tsPathsFromConfig,
@@ -194,7 +194,13 @@ export class ProjectSession {
   ) {
     // normalize separators so path-prefix checks work regardless of input form
     this.root = path.resolve(root);
-    this.git = new GitService(this.root);
+    // what git reports is filtered by what Flare scans, so a log file or a
+    // build output never lands in the changed list between the source files
+    this.git = new GitService(this.root, (rel) => {
+      const ig = this.ignore ?? (this.ignore = buildIgnore(this.root));
+      // an untracked directory arrives as `logs/`; the rules know that shape
+      return rel.endsWith('/') ? isIgnored(ig, rel.slice(0, -1), true) : isIgnored(ig, rel, false);
+    });
     this.shadow = new ShadowService(this.root, storageRoot);
     this.store = new ProjectStore(this.root, storageRoot);
     const hash = crypto.createHash('sha1').update(this.root.toLowerCase()).digest('hex').slice(0, 16);
@@ -262,6 +268,8 @@ export class ProjectSession {
 
   /** Files git knew about when the project opened — used to tell "added" from "edited". */
   private gitTrackedAtOpen = new Set<string>();
+  /** the project's ignore rules — defaults plus .gitignore — built once */
+  private ignore: import('ignore').Ignore | null = null;
 
   /** Initial scan + watcher + shadow init. Returns full project info. */
   async open(): Promise<ProjectInfo> {
@@ -281,7 +289,7 @@ export class ProjectSession {
     });
     void this.shadow.snapshot('session start');
 
-    const ig = buildIgnore(this.root);
+    const ig = this.ignore ?? (this.ignore = buildIgnore(this.root));
     this.watcher = new WatcherService(this.root, ig, (batch) => this.handleBatch(batch));
     this.watcher.start();
 

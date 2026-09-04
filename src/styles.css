@@ -4990,10 +4990,11 @@ svg.icon {
 .burst-head {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   padding: 7px 10px;
   cursor: pointer;
   font-size: 12px;
+  min-width: 0;
 }
 
 .burst-head:hover {
@@ -5055,35 +5056,64 @@ svg.icon {
 }
 
 .burst-body {
-  padding: 4px 10px 10px;
+  padding: 6px 10px 10px;
   border-top: 1px solid var(--n3);
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 8px;
 }
 
-.burst-intent {
-  font-size: 12px;
+/*
+ * Why, and whether it was checked: one quiet block, one line each.
+ *
+ * These were two boxes — the intent in one, the evidence in another with a
+ * coloured rule down its side — stacked above the files on every open card,
+ * and the change itself started a screen down. The caption carries the
+ * verdict's colour now; the sentence stays at text size.
+ */
+.burst-context {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
   line-height: 1.5;
   color: var(--n12);
   background: var(--n2);
   border-radius: var(--r-md);
-  padding: 7px 10px;
+  padding: 6px 10px;
 }
 
-.intent-goal b,
-.intent-ruled b {
-  color: var(--accent-soft);
-  font-weight: 600;
-  margin-right: 6px;
+.context-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.context-cap {
+  flex: 0 0 56px;
   font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: var(--track-caps);
+  color: var(--n9);
 }
 
-.intent-ruled {
-  margin-top: 4px;
-  color: var(--n11);
+.context-line.evidence.good .context-cap {
+  color: var(--good);
+}
+
+.context-line.evidence.warn .context-cap {
+  color: var(--warn);
+}
+
+.context-line.evidence.crit .context-cap {
+  color: var(--crit);
+}
+
+.context-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .intent-missing {
@@ -5092,34 +5122,38 @@ svg.icon {
   cursor: help;
 }
 
-.burst-evidence {
-  font-size: 11px;
-  border-radius: var(--r-md);
-  padding: 7px 10px;
-  background: var(--n2);
-  border-left: 2px solid var(--n6);
+/* the commands behind the verdict, folded under it */
+.checks {
+  padding-left: 64px;
 }
 
-.burst-evidence.good {
-  border-left-color: var(--good);
+.checks > summary {
+  list-style: none;
+  font-size: 10px;
+  color: var(--n9);
+  cursor: pointer;
+  user-select: none;
 }
 
-.burst-evidence.warn {
-  border-left-color: var(--warn);
+.checks > summary::-webkit-details-marker {
+  display: none;
 }
 
-.burst-evidence.crit {
-  border-left-color: var(--crit);
+.checks > summary::before {
+  content: '▸ ';
 }
 
-.evidence-title {
+.checks[open] > summary::before {
+  content: '▾ ';
+}
+
+.checks > summary:hover {
   color: var(--n12);
-  line-height: 1.5;
 }
 
 .evidence-list {
   list-style: none;
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -5204,7 +5238,7 @@ svg.icon {
   padding: 1px 5px;
 }
 
-.burst-files-head {
+.burst-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -5213,20 +5247,101 @@ svg.icon {
   padding-top: 2px;
 }
 
+.burst-tiers {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the buttons keep their one line; the summary is what gives way */
+.burst-actions .btn {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/*
+ * The files, by tier.
+ *
+ * The tier is said once, as a heading over its group, instead of as a chip on
+ * every row — and the reason each file is there is cut to the one that put it
+ * in that tier, the rest under the pointer. On a big change the skim group
+ * starts folded: it is, by definition, the part you were going to skip.
+ */
 .burst-rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+.brow-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brow-group-head {
+  appearance: none;
+  background: none;
+  border: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--n9);
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--r-sm);
+}
+
+.brow-group-head:hover {
+  background: var(--n2);
+}
+
+.brow-group.careful .brow-group-head {
+  color: var(--crit);
+}
+
+.brow-group.read .brow-group-head {
+  color: var(--warn);
+}
+
+.brow-group-caret {
+  width: 8px;
+  opacity: 0.8;
+}
+
+.brow-group-count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .brow {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 6px;
+  padding: 2px 6px 2px 8px;
   border-radius: var(--r-md);
   font-size: 11px;
   cursor: pointer;
+}
+
+/* the unread mark: a dot before the path, the way mail does it */
+.brow-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.brow-dot.unread {
+  background: var(--accent);
 }
 
 .brow:hover {
@@ -5237,51 +5352,37 @@ svg.icon {
   opacity: 0.55;
 }
 
-/*
- * The tier speaks once per row, quietly. This was an uppercase amber outline
- * chip, and four of them stacked in a burst read as four alarms — the row's
- * severity is a sorting fact, not a warning light, so it is a tinted label at
- * text size and the group header above already says how many need care.
- */
-.tier-badge {
-  flex: 0 0 auto;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: var(--r-sm);
-  background: var(--n3);
-  color: var(--n10);
-  cursor: help;
-  white-space: nowrap;
-}
-
-.tier-badge.careful {
-  color: var(--crit);
-  background: var(--crit-wash);
-}
-
-.tier-badge.read {
-  color: var(--warn);
-  background: var(--warn-wash);
-}
-
 .brow-path {
   color: var(--n13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 46%;
+  max-width: 52%;
 }
 
 .brow-deleted {
   color: var(--crit);
 }
 
-.brow-reasons {
+.brow-why {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
   color: var(--n10);
   font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.brow-more {
+  flex: 0 0 auto;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  background: var(--n3);
+  color: var(--n9);
 }
 
 
@@ -5469,22 +5570,6 @@ button.btn:disabled {
 .smell-count {
   color: var(--n9);
   font-size: 10px;
-}
-
-.brow-unread {
-  /* every row starts unread, so this is a quiet marker that fades away as you
-    work rather than a badge competing with the tier */
-  flex: 0 0 auto;
-  font-size: 10px;
-  color: var(--warn-line);
-  cursor: help;
-}
-
-.brow-unread::before {
-  content: '•';
-  font-size: 9px;
-  margin-right: 3px;
-  vertical-align: 1px;
 }
 
 /* Under a magnitude lens the rail's colour bleeds into the card, scaled by the
@@ -6474,11 +6559,9 @@ button.btn:disabled {
   color: var(--n9);
 }
 
-/* Served in a browser: a path box stands in for the native folder dialog. */
-.start-open {
-  display: flex;
-  gap: 8px;
-  width: 100%;
+/* the keyboard hint rides on the desktop's system-dialog button */
+.start-buttons .start-kbd {
+  margin-left: 6px;
 }
 
 .start-input {
@@ -7342,6 +7425,7 @@ button.btn:disabled {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 /* ---- starting a project in a folder that does not exist yet ---------- */

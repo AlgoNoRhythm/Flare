@@ -55,7 +55,7 @@ export function reviewTier(f: TierInput): TierResult {
   if (f.blastRadius >= 3) {
     reasons.push(`${f.blastRadius} file${f.blastRadius === 1 ? '' : 's'} break if this is wrong`);
   } else if (f.fanIn >= 1) {
-    reasons.push(`${f.fanIn} file${f.fanIn === 1 ? '' : 's'} import it`);
+    reasons.push(f.fanIn === 1 ? '1 file imports it' : `${f.fanIn} files import it`);
   }
   if (uncovered(f)) {
     reasons.push(f.coveragePct === null ? 'no test covers it' : `only ${Math.round(f.coveragePct)}% covered`);
@@ -108,6 +108,29 @@ export function baseSnapshotFor(
     if (!best || snap.time > best.time) best = snap;
   }
   return best?.hash ?? null;
+}
+
+/**
+ * The rows bucketed by tier, worst tier first, empty tiers left out.
+ *
+ * A burst's file list reads as one flat run of rows otherwise, and the tier
+ * — the one fact that says how much of your attention each row deserves —
+ * was a badge repeated on every one of them. As groups it is said once per
+ * tier, and the tier nobody needs to read can fold away.
+ */
+export function groupByTier<T extends { tier: ReviewTier }>(
+  rows: readonly T[],
+): { tier: ReviewTier; rows: T[] }[] {
+  const buckets = new Map<ReviewTier, T[]>();
+  for (const row of rows) {
+    const list = buckets.get(row.tier);
+    if (list) list.push(row);
+    else buckets.set(row.tier, [row]);
+  }
+  return (Object.keys(TIER_ORDER) as ReviewTier[])
+    .sort((a, b) => TIER_ORDER[a] - TIER_ORDER[b])
+    .filter((tier) => buckets.has(tier))
+    .map((tier) => ({ tier, rows: buckets.get(tier)! }));
 }
 
 /** "read 3 carefully, read 4, skim 9" */

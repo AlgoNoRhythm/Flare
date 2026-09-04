@@ -143,6 +143,15 @@ export interface FlareTransport {
     subscribe(watcher: (state: ConnectionState) => void): () => void;
   };
   invoke(channel: string, args: unknown[]): Promise<unknown>;
+  /**
+   * The same call with no answer wanted.
+   *
+   * A keystroke is the case: nothing waits on it, and over a network an
+   * acknowledgement per key is a frame back for every frame out — the return
+   * half of a round trip spent on a `true` nobody reads. A transport that
+   * leaves this out gets `invoke` with the result dropped.
+   */
+  notify?(channel: string, args: unknown[]): void;
   on(channel: string, listener: (payload: unknown) => void): () => void;
 }
 
@@ -155,6 +164,10 @@ export interface FlareTransport {
 export function createApi(t: FlareTransport): FlareApi {
   const call = <T>(channel: string, ...args: unknown[]): Promise<T> =>
     t.invoke(channel, args) as Promise<T>;
+  const send = (channel: string, ...args: unknown[]): void => {
+    if (t.notify) t.notify(channel, args);
+    else void t.invoke(channel, args);
+  };
 
   /**
    * Follow a project to the session that owns it.
@@ -304,9 +317,10 @@ export function createApi(t: FlareTransport): FlareApi {
     positionsSave: (positions) => call('positions:save', positions),
 
     ptyCreate: (id, cols, rows, cwd) => call('pty:create', id, cols, rows, cwd),
-    // keystrokes and resizes are fire-and-forget: nothing awaits them
-    ptyWrite: (id, data) => void call('pty:write', id, data),
-    ptyResize: (id, cols, rows) => void call('pty:resize', id, cols, rows),
+    // keystrokes and resizes are fire-and-forget: nothing awaits them, so
+    // nothing is sent back for them either
+    ptyWrite: (id, data) => send('pty:write', id, data),
+    ptyResize: (id, cols, rows) => send('pty:resize', id, cols, rows),
     ptyDispose: (id) => call('pty:dispose', id),
 
     windowControl: (action) => void call('window:control', action),

@@ -4,13 +4,14 @@ import { agentIdOf, agentLabelOf, agentNameOf, type Conflict } from '../../share
 import type { Decision, Question } from '../../shared/tasks';
 import { BurstStrip, type BurstRange } from './BurstStrip';
 import { Splitter } from './Splitter';
-import type { ChangeBurst, VerificationState } from '../../shared/activity';
+import type { ChangeBurst } from '../../shared/activity';
 import { VERIFICATION_HINT, VERIFICATION_LABEL, VERIFY_TONE } from '../../shared/activity';
 import type { Insights } from '../../shared/insights';
 import {
   TIER_HINT,
   TIER_LABEL,
   baseSnapshotFor,
+  groupByTier,
   reviewTier,
   sortForReview,
   tierSummary,
@@ -39,6 +40,15 @@ import { agentColor, agentShape } from '../graph/lenses';
  * so a 30-file change arrived as 30 rows with no shape. The ledger keeps the
  * detail the map cannot carry: intent, evidence, the reason each file is
  * tiered where it is.
+ *
+ * The ledger says each thing once. A card used to carry the intent in a box,
+ * the evidence in a second box, a tier badge on every row, every reason for
+ * every row and three buttons per row — a change of a dozen files was a wall
+ * nobody could scan. Now the card is a head, two lines of context, one row
+ * of actions and the files grouped by tier, with the tier said once as a
+ * heading and the reasons cut to the one that matters, the rest a hover
+ * away. The skim group folds on a big change, because it is by definition
+ * the part you were going to skip.
  *
  * Both sides collapse, and the divider between them is draggable, because
  * which of the two you want is a question about the change rather than a
@@ -88,12 +98,29 @@ interface Props {
   onOpenConflict(conflict: Conflict): void;
 }
 
-const SEV_ICON = { critical: '●', warning: '⚠︎', info: 'ℹ︎' } as const;
+type Severity = 'critical' | 'warning' | 'info';
+
+const SEV_ICON: Record<Severity, string> = { critical: '●', warning: '⚠︎', info: 'ℹ︎' };
+const SEV_ORDER: Record<Severity, number> = { critical: 0, warning: 1, info: 2 };
+
 /** Resolved per render: a module-level hex keeps whichever theme loaded first. */
-function sevColor(severity: 'critical' | 'warning' | 'info'): string {
+function sevColor(severity: Severity): string {
   if (severity === 'critical') return UI_STATUS.critical;
   return severity === 'warning' ? UI_STATUS.warning : info();
 }
+
+/** The worst of a burst's smells, for the one chip its head carries. */
+function worstSeverity(smells: readonly { severity: Severity }[]): Severity {
+  let worst: Severity = 'info';
+  for (const s of smells) if (SEV_ORDER[s.severity] < SEV_ORDER[worst]) worst = s.severity;
+  return worst;
+}
+
+/**
+ * Above this many files the skim group starts folded. Below it the whole
+ * change fits on a screen, and a fold would hide rows for nothing.
+ */
+const FOLD_SKIM_ABOVE = 10;
 
 interface Row {
   path: string;
@@ -140,6 +167,11 @@ export function ReviewPanel({
   const [onlyProblems, setOnlyProblems] = useState(false);
   /** show only one agent's changes; null is everyone's */
   const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  /**
+   * Tier groups whose fold has been toggled by hand, keyed `burst:tier`.
+   * Only the exceptions are kept: the default is worked out per burst.
+   */
+  const [foldOverrides, setFoldOverrides] = useState<ReadonlyMap<string, boolean>>(new Map());
 
   /*
    * Which of the two halves is showing.
@@ -195,9 +227,9 @@ export function ReviewPanel({
    *
    * An alert about one file that opens a tab listing forty changes has handed
    * the search back to the person who clicked it. So the burst it belongs to is
-   * opened, any filter hiding it is lifted, and the row is scrolled to and lit
-   * for a few seconds — long enough to find, not long enough to become part of
-   * how the row looks.
+   * opened, any filter hiding it is lifted, its tier group is unfolded, and the
+   * row is scrolled to and lit for a few seconds — long enough to find, not
+   * long enough to become part of how the row looks.
    */
   useEffect(() => {
     if (!focusPath) return;
@@ -205,6 +237,11 @@ export function ReviewPanel({
     if (burst) {
       setExpanded((prev) => (prev.has(burst.id) ? prev : new Set([...prev, burst.id])));
       if (burst.verification === 'passed' && burst.smells.length === 0) setOnlyProblems(false);
+      setFoldOverrides((prev) => {
+        const next = new Map(prev);
+        for (const tier of ['careful', 'read', 'skim'] as const) next.set(`${burst.id}:${tier}`, true);
+        return next;
+      });
     }
     setFocused(focusPath);
     onFocusHandled?.();
@@ -320,6 +357,17 @@ export function ReviewPanel({
     (b) => b.verification === 'not-run' || b.verification === 'stale' || b.verification === 'failed',
   ).length;
   const smellCount = bursts.reduce((a, b) => a + b.smells.length, 0);
+
+  const toggleBurst = (id: string): void =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleFold = (key: string, open: boolean): void =>
+    setFoldOverrides((prev) => new Map(prev).set(key, !open));
 
   if (bursts.length === 0) {
     return (
@@ -499,267 +547,287 @@ export function ReviewPanel({
             {listCollapsed ? '◂' : '▾'} {listCollapsed ? '' : 'changes'}
           </button>
           {!listCollapsed && (
-      <div className="review-list">
-        {/*
-          The story first, then the changes it is about.
+            <div className="review-list">
+              {/*
+                The story first, then the changes it is about.
 
-          Every row below is something Flare derived; this is the one thing it
-          had to be told. A person opening this panel after a night of agent
-          work wants the sentence before the diff — and the diff is right
-          underneath, so the sentence can be checked rather than believed.
-        */}
-        <SessionStory
-          summaries={summaries}
-          bursts={bursts}
-          onSelectFile={onSelectFile}
-          onOpenFile={onOpenFile}
-        />
-        {visible.length === 0 && (
-          <div className="issues-empty">
-            <div className="issues-empty-mark">✓</div>
-            every change was verified and looks clean
-          </div>
-        )}
-        {visible.map((burst) => {
-          const rows = rowsFor(burst);
-          const open = expanded.has(burst.id);
-          const tone = VERIFY_TONE[burst.verification];
-          /* what this burst changed things *from* — see baseSnapshotFor */
-          const base = baseSnapshotFor(burst.startedAt, snapshots);
-          const files = rows.length;
-          return (
-            <div key={burst.id} className={`burst tone-${tone}`} data-testid={`burst-${burst.id}`}>
-              <div
-                className="burst-head"
-                onClick={() =>
-                  setExpanded((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(burst.id)) next.delete(burst.id);
-                    else next.add(burst.id);
-                    return next;
-                  })
-                }
-              >
-                <span className="burst-caret">{open ? '▾' : '▸'}</span>
-                {/*
-                  Who, then what. The name is the part that has to survive a
-                  narrow panel — with three agents on one repo, "Claude 2" is
-                  what makes the row findable and "Add OAuth" is the detail
-                  that explains it, so the second one is what truncates.
-                */}
-                <span className="burst-agent" style={{ color: agentColor(agentIdOf(burst)) }}>
-                  {agentNameOf(burst)}
-                </span>
-                {agentLabelOf(burst) !== agentNameOf(burst) && (
-                  <span className="burst-doing" title={agentLabelOf(burst)}>
-                    {agentLabelOf(burst)}
-                  </span>
-                )}
-                <span className="burst-files">
-                  {files} file{files === 1 ? '' : 's'}
-                </span>
-                <span
-                  className={`verify-pill ${tone}`}
-                  title={VERIFICATION_HINT[burst.verification]}
-                  data-testid={`verify-${burst.id}`}
-                >
-                  {VERIFICATION_LABEL[burst.verification]}
-                </span>
-                {!open &&
-                  burst.smells.map((s) => (
-                    <span key={s.rule} className="smell-chip" style={{ color: sevColor(s.severity) }} title={s.title}>
-                      {SEV_ICON[s.severity]} {s.rule}
-                    </span>
-                  ))}
-                {open && burst.smells.length > 0 && (
-                  <span className="smell-chip" style={{ color: sevColor(burst.smells[0].severity) }}>
-                    {burst.smells.length} smell{burst.smells.length === 1 ? '' : 's'}
-                  </span>
-                )}
-                <span className="spacer" />
-                <span className="burst-time">{ago(burst.endedAt)}</span>
-              </div>
-
-              {open && (
-                <div className="burst-body">
-                  <div className="burst-intent">
-                    {burst.intent ? (
-                      <>
-                        <div className="intent-goal">
-                          <b>Goal</b> {burst.intent.goal}
-                        </div>
-                        {burst.intent.ruledOut && (
-                          <div className="intent-ruled">
-                            <b>Ruled out</b> {burst.intent.ruledOut}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="intent-missing" title="Agents can call the record_intent MCP tool before editing">
-                        No intent recorded — you are the first person to see this code, with nothing
-                        explaining why it was written.
-                      </div>
-                    )}
-                  </div>
-
-                  <div className={`burst-evidence ${tone}`} data-testid={`evidence-${burst.id}`}>
-                    <div className="evidence-title">{VERIFICATION_HINT[burst.verification]}</div>
-                    {burst.checks.length > 0 && (
-                      <ul className="evidence-list">
-                        {burst.checks.map((check, i) => (
-                          <li key={`${check.at}-${i}`}>
-                            <span className={`check-outcome ${check.outcome}`}>{check.outcome}</span>
-                            <span className="mono check-cmd">{shortenCommand(check.command, 70)}</span>
-                            <span className="muted">
-                              {check.at < burst.endedAt ? 'before the last edit' : ago(check.at)}
-                            </span>
-                            {check.evidence && <div className="mono check-evidence">{check.evidence}</div>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-
-                  <div className="burst-files-head">
-                    <span>{tierSummary(rows.map((r) => r.tier))}</span>
-                    <span className="spacer" />
-                    <button
-                      className="btn primary"
-                      onClick={() => onWalkthrough(rows.filter((r) => !r.removed).map((r) => r.path))}
-                      title="Step through these files on the graph, worst-risk first"
-                      data-testid={`walk-${burst.id}`}
-                    >
-                      ▶ Walk through
-                    </button>
-                    <button
-                      className="btn"
-                      onClick={() => onApprove(rows.map((r) => r.path))}
-                      title="Stop flagging these files. Nothing on disk changes — this is bookkeeping, not approval."
-                    >
-                      ✓ Dismiss
-                    </button>
-                    {base && (
-                      <button
-                        className="btn danger"
-                        title="Undo it: restore every file to the snapshot taken just before this burst. A snapshot is taken first, so this is itself undoable."
-                        onClick={() => onRevertAll(base, `${files} file${files === 1 ? '' : 's'} by ${burst.agent}`)}
-                      >
-                        ↩ Revert {files === 1 ? 'this file' : `these ${num(files)} files`}
-                      </button>
-                    )}
-                  </div>
-
-                  {burst.smells.length > 0 && (
-                    <div className="burst-smells">
-                      {burst.smells.map((smell) => (
-                        <details key={smell.rule} className="smell" data-testid={`smell-${smell.rule}`}>
-                          <summary>
-                            <span className="smell-title" style={{ color: sevColor(smell.severity) }}>
-                              {SEV_ICON[smell.severity]} {smell.title}
-                            </span>
-                            <span className="smell-count">
-                              {smell.paths.length} file{smell.paths.length === 1 ? '' : 's'}
-                            </span>
-                          </summary>
-                          <div className="smell-detail">{smell.detail}</div>
-                          <div className="smell-paths">
-                            {smell.paths.slice(0, 6).map((p) => (
-                              <a key={p} className="deplink mono" onClick={() => onSelectFile(p)}>
-                                {p}
-                              </a>
-                            ))}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="burst-rows">
-                    {rows.map((row) => (
-                      <div
-                        key={row.path}
-                        className={`brow tier-${row.tier}${row.approved ? ' approved' : ''}${
-                          focused === row.path ? ' focused' : ''
-                        }`}
-                        data-testid={`brow-${row.path}`}
-                        /*
-                         * A click on a changed file shows the change.
-                         *
-                         * It used to only move the selection, which put the
-                         * file's metrics in the details panel and left "what
-                         * actually changed here" two more clicks away — on a
-                         * row whose entire reason for existing is that
-                         * something was edited.
-                         */
-                        onClick={() => {
-                          onSelectFile(row.path);
-                          if (!row.removed) onOpenDiff(row.path, base);
-                        }}
-                        onDoubleClick={() => !row.removed && onOpenFile(row.path)}
-                      >
-                        <span className={`tier-badge ${row.tier}`} title={TIER_HINT[row.tier]}>
-                          {TIER_LABEL[row.tier]}
-                        </span>
-                        <span className="mono brow-path">
-                          {row.removed && <span className="brow-deleted">deleted </span>}
-                          {row.path}
-                        </span>
-                        {!row.read && !row.removed && (
-                          <span className="brow-unread" title="no human has opened this file since it changed">
-                            unread
-                          </span>
-                        )}
-                        <span className="brow-reasons">{row.reasons.join(' · ')}</span>
-                        <span className="spacer" />
-                        {!row.removed && (
-                          <button
-                            className="row-btn"
-                            title={
-                              base
-                                ? 'Diff this file against its state before this change'
-                                : 'Diff this file against git HEAD — nothing older was snapshotted'
-                            }
-                            data-testid={`brow-diff-${row.path}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onOpenDiff(row.path, base);
-                            }}
-                          >
-                            diff
-                          </button>
-                        )}
-                        {base && (
-                          <button
-                            className="row-btn danger"
-                            title="Undo this file: restore it to its state before the burst, leaving the rest alone"
-                            data-testid={`brow-revert-${row.path}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onRevertFile(base, row.path);
-                            }}
-                          >
-                            revert
-                          </button>
-                        )}
-                        <button
-                          className="row-btn"
-                          title="Stop flagging this file. It stays exactly as it is on disk."
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onApprove([row.path]);
-                          }}
-                        >
-                          {row.approved ? '✓' : 'dismiss'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                Every row below is something Flare derived; this is the one thing it
+                had to be told. A person opening this panel after a night of agent
+                work wants the sentence before the diff — and the diff is right
+                underneath, so the sentence can be checked rather than believed.
+              */}
+              <SessionStory
+                summaries={summaries}
+                bursts={bursts}
+                onSelectFile={onSelectFile}
+                onOpenFile={onOpenFile}
+              />
+              {visible.length === 0 && (
+                <div className="issues-empty">
+                  <div className="issues-empty-mark">✓</div>
+                  every change was verified and looks clean
                 </div>
               )}
+              {visible.map((burst) => {
+                const rows = rowsFor(burst);
+                const open = expanded.has(burst.id);
+                const tone = VERIFY_TONE[burst.verification];
+                /* what this burst changed things *from* — see baseSnapshotFor */
+                const base = baseSnapshotFor(burst.startedAt, snapshots);
+                const files = rows.length;
+                const groups = groupByTier(rows);
+                const smells = burst.smells.length;
+                return (
+                  <div key={burst.id} className={`burst tone-${tone}`} data-testid={`burst-${burst.id}`}>
+                    <div className="burst-head" onClick={() => toggleBurst(burst.id)}>
+                      <span className="burst-caret">{open ? '▾' : '▸'}</span>
+                      {/*
+                        Who, then what. The name is the part that has to survive a
+                        narrow panel — with three agents on one repo, "Claude 2" is
+                        what makes the row findable and "Add OAuth" is the detail
+                        that explains it, so the second one is what truncates.
+                      */}
+                      <span className="burst-agent" style={{ color: agentColor(agentIdOf(burst)) }}>
+                        {agentNameOf(burst)}
+                      </span>
+                      {agentLabelOf(burst) !== agentNameOf(burst) && (
+                        <span className="burst-doing" title={agentLabelOf(burst)}>
+                          {agentLabelOf(burst)}
+                        </span>
+                      )}
+                      <span className="spacer" />
+                      {/* one chip for all of them; the rules are named in the body */}
+                      {smells > 0 && (
+                        <span
+                          className="smell-chip"
+                          style={{ color: sevColor(worstSeverity(burst.smells)) }}
+                          title={burst.smells.map((s) => s.title).join('\n')}
+                        >
+                          {SEV_ICON[worstSeverity(burst.smells)]} {smells} smell{smells === 1 ? '' : 's'}
+                        </span>
+                      )}
+                      <span
+                        className={`verify-pill ${tone}`}
+                        title={VERIFICATION_HINT[burst.verification]}
+                        data-testid={`verify-${burst.id}`}
+                      >
+                        {VERIFICATION_LABEL[burst.verification]}
+                      </span>
+                      <span className="burst-files">
+                        {files} file{files === 1 ? '' : 's'}
+                      </span>
+                      <span className="burst-time">{ago(burst.endedAt)}</span>
+                    </div>
+
+                    {open && (
+                      <div className="burst-body">
+                        {/*
+                          Why, and whether it was checked — two lines, not two boxes.
+                          The checks themselves are there for whoever wants the
+                          command and its verdict; the sentence is what a reviewer
+                          needs from across the room.
+                        */}
+                        <div className="burst-context">
+                          <div className="context-line">
+                            <span className="context-cap">Goal</span>
+                            {burst.intent ? (
+                              <span className="context-text">{burst.intent.goal}</span>
+                            ) : (
+                              <span
+                                className="context-text intent-missing"
+                                title="Agents can call the record_intent MCP tool before editing"
+                              >
+                                No intent recorded — nothing says why this was written.
+                              </span>
+                            )}
+                          </div>
+                          {burst.intent?.ruledOut && (
+                            <div className="context-line">
+                              <span className="context-cap">Ruled out</span>
+                              <span className="context-text">{burst.intent.ruledOut}</span>
+                            </div>
+                          )}
+                          <div className={`context-line evidence ${tone}`} data-testid={`evidence-${burst.id}`}>
+                            <span className="context-cap">Checked</span>
+                            <span className="context-text">{VERIFICATION_HINT[burst.verification]}</span>
+                          </div>
+                          {burst.checks.length > 0 && (
+                            <details className="checks">
+                              <summary>
+                                {burst.checks.length} check{burst.checks.length === 1 ? '' : 's'}
+                              </summary>
+                              <ul className="evidence-list">
+                                {burst.checks.map((check, i) => (
+                                  <li key={`${check.at}-${i}`}>
+                                    <span className={`check-outcome ${check.outcome}`}>{check.outcome}</span>
+                                    <span className="mono check-cmd">{shortenCommand(check.command, 70)}</span>
+                                    <span className="muted">
+                                      {check.at < burst.endedAt ? 'before the last edit' : ago(check.at)}
+                                    </span>
+                                    {check.evidence && <div className="mono check-evidence">{check.evidence}</div>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          )}
+                        </div>
+
+                        {smells > 0 && (
+                          <div className="burst-smells">
+                            {burst.smells.map((smell) => (
+                              <details key={smell.rule} className="smell" data-testid={`smell-${smell.rule}`}>
+                                <summary>
+                                  <span className="smell-title" style={{ color: sevColor(smell.severity) }}>
+                                    {SEV_ICON[smell.severity]} {smell.title}
+                                  </span>
+                                  <span className="smell-count">
+                                    {smell.paths.length} file{smell.paths.length === 1 ? '' : 's'}
+                                  </span>
+                                </summary>
+                                <div className="smell-detail">{smell.detail}</div>
+                                <div className="smell-paths">
+                                  {smell.paths.slice(0, 6).map((p) => (
+                                    <a key={p} className="deplink mono" onClick={() => onSelectFile(p)}>
+                                      {p}
+                                    </a>
+                                  ))}
+                                </div>
+                              </details>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="burst-actions">
+                          <span className="burst-tiers">{tierSummary(rows.map((r) => r.tier))}</span>
+                          <span className="spacer" />
+                          <button
+                            className="btn primary"
+                            onClick={() => onWalkthrough(rows.filter((r) => !r.removed).map((r) => r.path))}
+                            title="Step through these files on the graph, worst-risk first"
+                            data-testid={`walk-${burst.id}`}
+                          >
+                            ▶ Walk through
+                          </button>
+                          <button
+                            className="btn"
+                            onClick={() => onApprove(rows.map((r) => r.path))}
+                            title="Stop flagging these files. Nothing on disk changes — this is bookkeeping, not approval."
+                          >
+                            ✓ Dismiss
+                          </button>
+                          {base && (
+                            <button
+                              className="btn danger"
+                              title="Undo it: restore every file to the snapshot taken just before this burst. A snapshot is taken first, so this is itself undoable."
+                              onClick={() => onRevertAll(base, `${files} file${files === 1 ? '' : 's'} by ${burst.agent}`)}
+                            >
+                              ↩ Revert {files === 1 ? 'this file' : `${num(files)} files`}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="burst-rows">
+                          {groups.map((group) => {
+                            const key = `${burst.id}:${group.tier}`;
+                            const groupOpen =
+                              foldOverrides.get(key) ??
+                              !(group.tier === 'skim' && groups.length > 1 && files > FOLD_SKIM_ABOVE);
+                            return (
+                              <div key={group.tier} className={`brow-group ${group.tier}`}>
+                                <button
+                                  className="brow-group-head"
+                                  aria-expanded={groupOpen}
+                                  title={TIER_HINT[group.tier]}
+                                  onClick={() => toggleFold(key, groupOpen)}
+                                  data-testid={`brow-group-${burst.id}-${group.tier}`}
+                                >
+                                  <span className="brow-group-caret">{groupOpen ? '▾' : '▸'}</span>
+                                  {TIER_LABEL[group.tier]}
+                                  <span className="brow-group-count">{group.rows.length}</span>
+                                </button>
+                                {groupOpen &&
+                                  group.rows.map((row) => (
+                                    <div
+                                      key={row.path}
+                                      className={`brow tier-${row.tier}${row.approved ? ' approved' : ''}${
+                                        focused === row.path ? ' focused' : ''
+                                      }`}
+                                      data-testid={`brow-${row.path}`}
+                                      title={
+                                        row.removed
+                                          ? 'Deleted in this change'
+                                          : 'Click to see what changed · double-click to open the file'
+                                      }
+                                      /*
+                                       * A click on a changed file shows the change.
+                                       *
+                                       * It used to only move the selection, which put the
+                                       * file's metrics in the details panel and left "what
+                                       * actually changed here" two more clicks away — on a
+                                       * row whose entire reason for existing is that
+                                       * something was edited.
+                                       */
+                                      onClick={() => {
+                                        onSelectFile(row.path);
+                                        if (!row.removed) onOpenDiff(row.path, base);
+                                      }}
+                                      onDoubleClick={() => !row.removed && onOpenFile(row.path)}
+                                    >
+                                      {/* the unread mark: a dot, the way mail does it */}
+                                      <span
+                                        className={`brow-dot${!row.read && !row.removed ? ' unread' : ''}`}
+                                        title={!row.read && !row.removed ? 'No human has opened this file since it changed' : undefined}
+                                        aria-label={!row.read && !row.removed ? 'unread' : undefined}
+                                      />
+                                      <span className="mono brow-path">
+                                        {row.removed && <span className="brow-deleted">deleted </span>}
+                                        {row.path}
+                                      </span>
+                                      {/* the worst reason, and a count for the rest */}
+                                      {row.reasons.length > 0 && (
+                                        <span className="brow-why" title={row.reasons.join('\n')}>
+                                          {row.reasons[0]}
+                                          {row.reasons.length > 1 && (
+                                            <span className="brow-more">+{row.reasons.length - 1}</span>
+                                          )}
+                                        </span>
+                                      )}
+                                      <span className="spacer" />
+                                      {base && (
+                                        <button
+                                          className="row-btn danger"
+                                          title="Undo this file: restore it to its state before the burst, leaving the rest alone"
+                                          data-testid={`brow-revert-${row.path}`}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onRevertFile(base, row.path);
+                                          }}
+                                        >
+                                          revert
+                                        </button>
+                                      )}
+                                      <button
+                                        className="row-btn"
+                                        title="Stop flagging this file. It stays exactly as it is on disk."
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onApprove([row.path]);
+                                        }}
+                                      >
+                                        {row.approved ? '✓' : 'dismiss'}
+                                      </button>
+                                    </div>
+                                  ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
           )}
         </div>
       </div>

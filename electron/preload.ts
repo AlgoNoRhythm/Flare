@@ -19,6 +19,11 @@ const bridge = {
   kind: 'desktop' as const,
   invoke: (channel: string, args: unknown[]): Promise<unknown> =>
     ipcRenderer.invoke(channel, ...args),
+  // one way, no reply: `ipcRenderer.send` rather than an `invoke` whose
+  // answer is thrown away
+  notify: (channel: string, args: unknown[]): void => {
+    ipcRenderer.send(channel, ...args);
+  },
   on: (channel: string, listener: (payload: unknown) => void): (() => void) => {
     if (!isEventChannel(channel)) return () => undefined;
     const wrapped = (_event: unknown, payload: unknown) => listener(payload);

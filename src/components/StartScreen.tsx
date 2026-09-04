@@ -30,6 +30,13 @@ function splitPath(full: string): { name: string; parent: string } {
  * it every way to reach a *different* project — was unreachable in normal use.
  * The list is the point: the last thing you worked on is the first row and one
  * Enter away, so restoring is still a keystroke, just not an assumption.
+ *
+ * It is the same screen in a window and in a tab. The folder picker walks the
+ * filesystem of whichever machine Flare is running on, which is the only thing
+ * that works when that machine is not the one in front of you — and it works
+ * just as well when it is. The desktop keeps the system's own dialog as a
+ * second way in, on the shortcut it has always had, rather than as a
+ * different screen.
  */
 export function StartScreen() {
   const [recents, setRecents] = useState<RecentEntry[] | null>(null);
@@ -43,8 +50,37 @@ export function StartScreen() {
     void api.recentsGet().then(setRecents);
   }, []);
 
+  /*
+   * Open a folder, and say so if it did not.
+   *
+   * In a window the project comes back and this screen is replaced. Served,
+   * a session that starts navigates the page away and the call never resolves
+   * at all. So an answer with nothing in it is the one outcome left to show.
+   */
+  const openPath = (path: string): void => {
+    if (path === '') return;
+    setFailed(false);
+    setOpening(true);
+    void api.openProject(path).then((info) => {
+      if (info) return;
+      setOpening(false);
+      setFailed(true);
+    });
+  };
+
+  /** the native picker where there is one, the in-app one where there is not */
+  const openDialog = (): void => {
+    if (isDesktop) void api.openProjectDialog();
+    else setCreating(true);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        openDialog();
+        return;
+      }
       /*
        * Keys typed into a field belong to that field.
        *
@@ -64,13 +100,11 @@ export function StartScreen() {
       } else if (e.key === 'Enter' && list[cursor]) {
         e.preventDefault();
         void api.openProject(list[cursor].path);
-      } else if (e.key === 'o' && (e.ctrlKey || e.metaKey) && isDesktop) {
-        e.preventDefault();
-        void api.openProjectDialog();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recents, cursor]);
 
   return (
@@ -86,67 +120,35 @@ export function StartScreen() {
 
         <div className="start-body">
           <div className="start-actions">
-            {isDesktop ? (
-              <>
-                <div className="start-buttons">
-                  <button
-                    className="btn primary"
-                    data-testid="open-folder"
-                    onClick={() => void api.openProjectDialog()}
-                  >
-                    Open folder…
-                  </button>
-                  <button
-                    className="btn"
-                    data-testid="new-project"
-                    title="Create a folder and open it as a project"
-                    onClick={() => setCreating(true)}
-                  >
-                    New / open project…
-                  </button>
-                </div>
-                <span className="start-kbd">
-                  <kbd>Ctrl</kbd>
-                  <kbd>O</kbd>
-                </span>
-              </>
-            ) : (
-              /*
-               * Served in a browser there is no native dialog, and the files
-               * are on the far machine — so the picker walks the backend's
-               * filesystem rather than asking anyone to know a path by heart.
-               */
-              <FolderPicker
-                busy={opening}
-                onOpen={(path) => {
-                  if (path === '') return;
-                  setFailed(false);
-                  setOpening(true);
-                  // a session that starts navigates this page away; getting a
-                  // result back at all means it did not open
-                  void api.openProject(path).then(() => {
-                    setOpening(false);
-                    setFailed(true);
-                  });
-                }}
-              />
-            )}
-            {!isDesktop && (
+            <FolderPicker busy={opening} onOpen={openPath} />
+            <div className="start-buttons">
               <button
                 className="btn"
                 data-testid="new-project"
-                title="Create a folder on that machine and open it as a project"
+                title="Create a folder on the machine running Flare and open it as a project"
                 onClick={() => setCreating(true)}
               >
                 New / open project…
               </button>
-            )}
+              {isDesktop && (
+                <button
+                  className="btn"
+                  data-testid="open-folder"
+                  title="Pick the folder with the system's own dialog"
+                  onClick={() => void api.openProjectDialog()}
+                >
+                  System dialog…
+                  <span className="start-kbd">
+                    <kbd>Ctrl</kbd>
+                    <kbd>O</kbd>
+                  </span>
+                </button>
+              )}
+            </div>
             <p className="start-note" data-testid="start-note">
               {failed && !opening
                 ? 'That folder could not be opened. It may have been moved or be unreadable.'
-                : isDesktop
-                  ? 'Point it at a repository. It indexes imports, watches for edits, and exposes the graph to your agent over MCP.'
-                  : 'Folders on the machine running Flare. Each one opens at its own url, so you can keep several going in several tabs.'}
+                : 'Point it at a repository on the machine running Flare. It indexes imports, watches for edits, and exposes the graph to your agent over MCP.'}
             </p>
           </div>
 

@@ -837,7 +837,7 @@ test('review cockpit: burst evidence, smells, tiering and walkthrough', async ()
   // load-bearing one sorts above the brand-new test that nothing imports
   const utilRow = page.getByTestId('brow-src/util.ts');
   await expect(utilRow).toBeVisible();
-  await expect(utilRow).toContainText(/break if this is wrong|import it/);
+  await expect(utilRow).toContainText(/break if this is wrong|imports? it/);
   const order = await burst.locator('.brow .brow-path').allTextContents();
   expect(order.indexOf('src/util.ts')).toBeLessThan(order.indexOf('src/util.test.ts'));
 

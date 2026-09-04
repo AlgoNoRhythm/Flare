@@ -47,6 +47,18 @@ describe('scanProject', () => {
     expect(result.allFiles.some((f) => f.startsWith('dist'))).toBe(false);
     expect(result.allFiles.some((f) => f.startsWith('secret'))).toBe(false);
   });
+
+  it('leaves log files out, rotated ones and a logs folder included', () => {
+    write('src/a.ts', 'export {};');
+    write('server.log', 'started');
+    write('out/../npm-debug.log', 'x');
+    write('logs/2026-09-04.txt', 'x');
+    write('var/app.log.1', 'x');
+    write('var/app.log.gz', 'x');
+    write('src/logger.ts', 'export const log = () => {};');
+    const result = scanProject(tmp);
+    expect(result.allFiles.sort()).toEqual(['src/a.ts', 'src/logger.ts']);
+  });
 });
 
 describe('parseFileFromDisk', () => {

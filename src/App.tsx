@@ -147,7 +147,9 @@ const FOLD_ON_OPEN_ABOVE = 70;
  * Not "recent": served over the network that still works, it just means
  * something slightly different — a project is a session with a url of its own,
  * so picking one takes you there rather than swapping it into this window.
- * "open" is the native folder dialog specifically, which a tab cannot show.
+ * "open" is the native folder dialog specifically, which a tab cannot show;
+ * the in-app picker under "New/Open Project" is the same road in both builds,
+ * and Ctrl+O reaches whichever of the two the build has.
  */
 const DESKTOP_ONLY_MENU = new Set(['open', 'reveal', 'exit']);
 
@@ -1615,7 +1617,23 @@ export function App() {
         e.preventDefault();
         setSidebarVisible((v) => !v);
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+      /*
+       * Ctrl+O opens a folder in both builds — the system's dialog where there
+       * is one, the in-app picker where there is not. On the start screen the
+       * screen itself answers it, so this only listens once a project is open.
+       */
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'o' && projectRef.current) {
+        e.preventDefault();
+        if (isDesktop) void api.openProjectDialog();
+        else setNewProjectOpen(true);
+      }
+      /*
+       * Close the editor tab. A browser keeps Ctrl+W for itself — it closes
+       * the whole tab before the page hears of the key — so the same thing is
+       * on Alt+W everywhere, and Ctrl+W still works in the desktop window.
+       */
+      const altW = e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyW';
+      if (altW || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'w')) {
         e.preventDefault();
         setActiveTab((cur) => {
           if (cur !== 'graph') closeTab(cur);

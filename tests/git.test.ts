@@ -49,6 +49,19 @@ describe('parsePorcelainZ', () => {
 });
 
 describe('GitService', () => {
+  it('leaves out what the project does not track, even when git reports it', async () => {
+    write('src/a.ts', 'export {};');
+    write('server.log', 'started');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    write('src/a.ts', 'export const a = 1;');
+    write('server.log', 'started\nmore');
+    write('logs/today.txt', 'x');
+    const service = new GitService(tmp, (rel) => /\.log$/.test(rel) || rel.startsWith('logs/'));
+    const status = await service.status();
+    expect(Object.keys(status.files).sort()).toEqual(['src/a.ts']);
+  });
+
   it('reports non-repo directories', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flare-norepo-'));
     try {

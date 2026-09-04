@@ -8,8 +8,37 @@ export interface PtyEvents {
 
 export class PtyService {
   private terms = new Map<string, pty.IPty>();
+  /**
+   * Output waiting to go out, per terminal.
+   *
+   * A pty hands over what it has in small pieces — a redraw arrives as a
+   * dozen of them — and each piece used to become its own event, its own
+   * JSON frame and its own websocket write. They are gathered until the
+   * event loop has drained this turn's I/O, which is at most a millisecond
+   * later and in practice the same instant: a lone keystroke's echo goes out
+   * as fast as before, and a burst of output goes out as one frame instead
+   * of forty.
+   */
+  private outbox = new Map<string, string[]>();
+  private flushScheduled = false;
 
   constructor(private events: PtyEvents) {}
+
+  private queueOutput(id: string, data: string): void {
+    const chunks = this.outbox.get(id);
+    if (chunks) chunks.push(data);
+    else this.outbox.set(id, [data]);
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    setImmediate(() => this.flushOutput());
+  }
+
+  private flushOutput(): void {
+    this.flushScheduled = false;
+    const ready = [...this.outbox];
+    this.outbox.clear();
+    for (const [id, chunks] of ready) this.events.onData(id, chunks.join(''));
+  }
 
   create(id: string, cwd: string, cols = 80, rows = 24): void {
     this.dispose(id);
@@ -22,9 +51,11 @@ export class PtyService {
       cwd,
       env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
     });
-    term.onData((data) => this.events.onData(id, data));
+    term.onData((data) => this.queueOutput(id, data));
     term.onExit(({ exitCode }) => {
       this.terms.delete(id);
+      // whatever it printed last goes out before the news that it is gone
+      this.flushOutput();
       this.events.onExit(id, exitCode);
     });
     this.terms.set(id, term);

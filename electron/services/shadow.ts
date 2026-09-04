@@ -22,6 +22,8 @@ __pycache__/
 .mypy_cache/
 .idea/
 *.log
+*.log.*
+logs/
 `;
 
 /**

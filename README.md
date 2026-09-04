@@ -262,7 +262,9 @@ the active lens, cluster bands are coloured by directory.*
   - **which files deserve attention.** Every file is tiered *read carefully /
     read / skim* from blast radius, coverage, cycles and complexity, with the
     reason spelled out ("9 files break if this is wrong", "no test covers it"),
-    so a 30-file change doesn't get 30 equal glances.
+    so a 30-file change doesn't get 30 equal glances. The tier is a heading
+    over its group rather than a badge on every row, and on a big change the
+    skim group starts folded.
   - **agent smells.** Rules for the shortcuts agent changes take and human ones
     don't: a test edited in the same burst as the code it covers, assertions
     deleted, `.skip`/`.only` added, lint or type suppressions introduced,
@@ -566,9 +568,10 @@ Flare — http://127.0.0.1:7345/?token=oq_F45fBJGdMTK4NJdm6y53n7-lHezBd
 ```
 
 **The port is the start screen.** Open it and you get Flare's own start
-screen — the same one the desktop app opens to: the projects you have opened
-before, and a folder browser that walks the filesystem on that machine. Pick
-one and it starts a session for it and takes you to its URL:
+screen — the same one the desktop app opens to, laid out the same way: the
+projects you have opened before, and a folder browser that walks the
+filesystem on that machine (the desktop keeps the system dialog as well, on
+Ctrl+O). Pick one and it starts a session for it and takes you to its URL:
 
 ```
 http://127.0.0.1:7345/api/
@@ -576,6 +579,20 @@ http://127.0.0.1:7345/api/
 
 From there it is the same IDE: the graph, the editor, the review cockpit, and a
 real terminal on the remote machine.
+
+**The terminal does not wait for the round trip.** A shell on another machine
+echoes what you type one network hop later, and at 80ms that is a terminal
+that feels underwater. Every key still goes out the moment it is pressed — Tab
+completion, history search and whatever agent is running in there all need the
+raw stream — but the character is drawn locally first and the shell's echo is
+treated as confirmation, the way mosh does it: only at a visible cursor on the
+main screen, undone before any output is applied so nothing can double, and
+switched off by itself for anything that does not echo (a password prompt, a
+full-screen program). It measures the echo delay as it goes and does nothing
+while the delay is short, so the desktop window behaves exactly as before.
+Underneath, keystrokes travel as one-way frames nobody acknowledges, terminal
+output is batched per event-loop turn instead of per pty read, and the socket a
+session's tab is proxied over runs with Nagle's algorithm off.
 
 **One port, many projects.** The url is the folder name — `/api/`, not
 `/api-3f21b8/`. It is assigned once and remembered, so it stays the same across
