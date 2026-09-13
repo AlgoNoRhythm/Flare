@@ -28,6 +28,13 @@
  *   prediction that stays unconfirmed is wrong — a password prompt, a program
  *   that reads keys silently — so it is erased and drawing stops until an
  *   echo is seen again;
+ * - an application that draws its own screen never gets a prediction. The
+ *   alternate screen is the old signal for that and it is no longer the only
+ *   one: an inline TUI — Codex's composer, and every agent that keeps a live
+ *   box on the main screen — stays on the primary buffer and brackets each
+ *   repaint in DEC mode 2026 instead. A guess drawn into a box that is about
+ *   to be erased and rewritten is wrong on arrival, so the first frame marker
+ *   ends prediction for the life of the terminal;
  * - the echo's own delay is measured on the way, and nothing is drawn while
  *   it is short. In a desktop window, or on a LAN, this whole file is
  *   bookkeeping and the screen behaves exactly as before.
@@ -87,6 +94,14 @@ export class PredictiveEcho {
   private pending: Prediction[] = [];
   private cursorHidden = false;
   private mouse = false;
+  /**
+   * The far side has repainted under a synchronized-update bracket.
+   *
+   * Latching rather than tracking on/off: the marker says *what is running*,
+   * not what it is doing this instant, and an app that framed one repaint owns
+   * the screen between them as well.
+   */
+  private framed = false;
   /** shell output written to the screen and not yet parsed */
   private inflight = 0;
   /**
@@ -237,6 +252,7 @@ export class PredictiveEcho {
       this.inflight === 0 &&
       !this.cursorHidden &&
       !this.mouse &&
+      !this.framed &&
       !this.look.alternate &&
       this.latency !== null &&
       this.latency >= this.minLatency &&
@@ -276,6 +292,7 @@ export class PredictiveEcho {
       for (const mode of m[1].split(';')) {
         if (mode === '25') this.cursorHidden = !on;
         else if (mode === '1000' || mode === '1002' || mode === '1003') this.mouse = on;
+        else if (mode === '2026') this.framed = true;
       }
     }
   }

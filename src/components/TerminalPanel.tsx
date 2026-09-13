@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { agentColor } from '../graph/lenses';
 import { PredictiveEcho, type EchoScreen } from '../terminalEcho';
+import { SyncFrames } from '../terminalFrames';
 import { onThemeChange } from '../theme';
 import { McpConnect } from './McpConnect';
 import type { CommandLogEntry } from '../../shared/types';
@@ -17,6 +18,8 @@ interface TermInstance {
   fit: FitAddon;
   host: HTMLDivElement;
   echo: PredictiveEcho;
+  /** holds a synchronized-update frame together, so it paints in one go */
+  frames: SyncFrames;
   unsubs: (() => void)[];
 }
 
@@ -70,6 +73,26 @@ const CLIENT_ID = (
   .slice(0, 8);
 
 let nextTermNumber = 1;
+
+/**
+ * Put a line into an agent the way a person would, rather than as bytes.
+ *
+ * `ptyWrite` was the obvious thing and it is wrong for exactly the programs
+ * this app exists to drive. An agent's composer is not a shell line: Codex
+ * turns on bracketed paste (`?2004h`) and reads anything arriving outside the
+ * brackets as keys, so a multi-line brief pasted raw submits at its first
+ * newline and drops the rest — the "it lands in Claude Code but not in Codex"
+ * difference, Claude Code having its own guess about what a fast burst of
+ * input means. Going through xterm gets both halves right: it brackets the
+ * text when the far side asked for brackets, and it normalises the newlines
+ * a text field never wanted. The trailing carriage return is sent after the
+ * paste closes, because *that* is the keypress that submits.
+ */
+function sendLine(inst: TermInstance | undefined, text: string): void {
+  if (!inst || text === '') return;
+  inst.term.paste(text);
+  inst.term.input('\r', false);
+}
 
 interface Props {
   projectRoot: string | null;
@@ -218,8 +241,7 @@ export function TerminalPanel({
       });
       for (const id of due) {
         promptedAt.current[id] = Date.now();
-        // the newline is what submits it — an agent's prompt reads a line
-        api.ptyWrite(id, `${heartbeatRef.current?.heartbeatCommand ?? ''}\r`);
+        sendLine(termsRef.current.get(id), heartbeatRef.current?.heartbeatCommand ?? '');
       }
     };
     // a minute is fine: the interval being waited out is measured in tens of
@@ -278,17 +300,32 @@ export function TerminalPanel({
      */
     const echo = new PredictiveEcho(screenOf(term));
 
+    /*
+     * A repaint reaches the screen whole, or not yet.
+     *
+     * An inline TUI brackets each frame in DEC 2026 and xterm.js does not
+     * implement it, so the erase half of a redraw was being painted on its own
+     * whenever the pty split a frame across chunks — which, for a composer
+     * that redraws on every keystroke, is the flicker. Holding the frame and
+     * handing it over in one write costs nothing on output that is not framed:
+     * a shell never sends the marker, and its bytes pass straight through.
+     */
+    const frames = new SyncFrames((data) => echo.output(data));
+
     const unsubs: (() => void)[] = [];
     unsubs.push(
       api.on('evt:ptyData', (payload) => {
         const p = payload as { id: string; data: string };
-        if (p.id === id) echo.output(p.data);
+        if (p.id === id) frames.write(p.data);
       }),
     );
     unsubs.push(
       api.on('evt:ptyExit', (payload) => {
         const p = payload as { id: string; exitCode: number };
-        if (p.id === id) term.write(`\r\n\x1b[90m[process exited with code ${p.exitCode}]\x1b[0m\r\n`);
+        if (p.id !== id) return;
+        // an agent killed mid-frame leaves one open: show it before the notice
+        frames.flush();
+        term.write(`\r\n\x1b[90m[process exited with code ${p.exitCode}]\x1b[0m\r\n`);
       }),
     );
     /*
@@ -313,10 +350,10 @@ export function TerminalPanel({
         // no permission, or no clipboard API — fall through
       }
       if (text === '') text = await api.clipboardRead();
-      if (text !== '') {
-        echo.input(text);
-        api.ptyWrite(id, text);
-      }
+      // `term.paste` is what brackets it for an agent that asked for brackets,
+      // and what turns CRLF into the CR a line editor expects; onData below
+      // still carries it to the pty, and still tells the echo about it
+      if (text !== '') term.paste(text);
     };
 
     const copySelection = (): boolean => {
@@ -354,7 +391,7 @@ export function TerminalPanel({
     });
     term.onResize(({ cols, rows }) => api.ptyResize(id, cols, rows));
 
-    const instance: TermInstance = { id, term, fit, host, echo, unsubs };
+    const instance: TermInstance = { id, term, fit, host, echo, frames, unsubs };
     termsRef.current.set(id, instance);
     setTermIds((ids) => [...ids, id]);
     setActiveId(id);
@@ -373,6 +410,7 @@ export function TerminalPanel({
     if (!inst) return;
     for (const u of inst.unsubs) u();
     void api.ptyDispose(id);
+    inst.frames.dispose();
     inst.echo.dispose();
     inst.term.dispose();
     inst.host.remove();

@@ -99,24 +99,27 @@ test('a small project boots unfolded; folds all, one, and back via the legend', 
   await expect(page.getByTestId('project-name')).toHaveText(path.basename(fixture));
   await expect(page.getByTestId('graph-container')).toBeVisible();
   // this fixture is far below the fold-on-open threshold, so nothing is hidden:
-  // 5 code files; app->util, app->helper, helper->util, script->common = 4 edges
-  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+  // 5 code files plus the README, which is on the map like anything else;
+  // app->util, app->helper, helper->util, script->common = 4 edges, and this
+  // README links nowhere yet
+  await expect(page.getByTestId('stats')).toHaveText('6 nodes · 4 edges');
   await expect(page.getByTestId('legend')).toContainText('src');
   await expect(page.getByTestId('legend')).toContainText('0/2 folded');
 
   // fold everything into cluster meta-nodes, then bring it all back
   await page.getByTestId('legend-fold-all').click();
-  await expect(page.getByTestId('stats')).toHaveText('2 nodes · 0 edges');
+  // two folder cards, and the README, which is at the root and so in neither
+  await expect(page.getByTestId('stats')).toHaveText('3 nodes · 0 edges');
   await expect(page.getByTestId('legend')).toContainText('2/2 folded');
   await page.getByTestId('legend-unfold-all').click();
-  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+  await expect(page.getByTestId('stats')).toHaveText('6 nodes · 4 edges');
 
   // and a single folder on its own: src/ folds to one card, tools/ stays open
   await page.getByTestId('legend-src').click();
-  await expect(page.getByTestId('stats')).toContainText('3 nodes');
+  await expect(page.getByTestId('stats')).toContainText('4 nodes');
   await expect(page.getByTestId('legend')).toContainText('1/2 folded');
   await page.getByTestId('legend-src').click();
-  await expect(page.getByTestId('stats')).toHaveText('5 nodes · 4 edges');
+  await expect(page.getByTestId('stats')).toHaveText('6 nodes · 4 edges');
 });
 
 test('file tree lists files and opens the editor with content', async () => {
@@ -279,12 +282,11 @@ test('connect dialog gives the setup for all three agents, and the line to open 
   // the project-scoped path is the one that keeps working with several windows
   expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp\//);
 
-  // ---- step 1: Claude Code is a command; the other two are config files, in
-  // different formats and different places, and guessing either is worse than
-  // no help
+  // ---- step 1: two of them are commands, opencode is a config file in a
+  // format and a place of its own, and guessing it is worse than no help
   await expect(page.getByTestId('mcp-snippet')).toContainText('claude mcp add --transport http');
   await page.getByTestId('mcp-target-codex').click();
-  await expect(page.getByTestId('mcp-snippet')).toContainText('[mcp_servers.flare]');
+  await expect(page.getByTestId('mcp-snippet')).toContainText('codex mcp add flare --url');
   await expect(page.getByTestId('mcp-snippet')).toContainText(url);
   await page.getByTestId('mcp-target-opencode').click();
   await expect(page.getByTestId('mcp-snippet')).toContainText('"type": "remote"');
@@ -386,6 +388,12 @@ test('markdown and images render, with the source one click away', async () => {
   await expect(page.locator('.doc-image img')).toHaveAttribute('src', /^data:image\/png;base64,/, {
     timeout: 20_000,
   });
+
+  // GUIDE.md is prose, and prose is on the map: let its card arrive here,
+  // where it is this test's business, rather than during the next test's node
+  // count. The image is not a node — nothing imports a png.
+  await page.getByTestId('tab-graph').click();
+  await expect(page.getByTestId('gcard-GUIDE.md')).toBeVisible({ timeout: 20_000 });
 });
 
 test('lenses and layout controls switch without breaking the graph', async () => {
@@ -396,7 +404,6 @@ test('lenses and layout controls switch without breaking the graph', async () =>
   await pickLens('tests');
   await pickLens('clusters');
   await page.getByTestId('layout-reset').click();
-  await page.waitForTimeout(400);
   await expect(page.getByTestId('graph-container')).toBeVisible();
   await expect.poll(async () => (await readStats()).nodes).toBe(before.nodes);
 });
@@ -576,7 +583,9 @@ test('a card click selects, a folder double-click unfolds, and a drag moves it',
   // folding, then re-opening by double-clicking the folder card itself
   const unfolded = await readStats();
   await page.getByTestId('legend-fold-all').click();
-  await expect(page.getByTestId('stats')).toHaveText('2 nodes · 0 edges');
+  // the two folder cards, plus the two documents at the root, which are in
+  // neither of them — README.md, and the GUIDE.md written further up
+  await expect(page.getByTestId('stats')).toHaveText('4 nodes · 0 edges');
   await expect(page.getByTestId('legend')).toContainText('2/2 folded');
   await page.getByTestId('gcard-@dir:src').dblclick();
   // src alone comes back; tools stays a single card
@@ -2307,6 +2316,179 @@ test('an agent writes the session down, and Flare checks it against the writes',
  * checks the shape people expect — matches grouped by file, Enter opens the
  * match at its line, and nothing is replaced without being asked twice.
  */
+/**
+ * Whose changes are these — by name, and by tool.
+ *
+ * With three sessions in a repo the review's "who" has two honest answers, and
+ * they are different questions. *Codex 2* is one session: the identity a
+ * conflict is attributed to. *Codex* is the tool, across whichever of its
+ * sessions happened to be alive — which is the question you ask when a run
+ * went wrong and you do not yet know which of its sessions did it.
+ */
+test('the review filters by agent and by the tool behind it', async () => {
+  const url = 'http://127.0.0.1:7411/mcp';
+  const connect = async (client: string): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: client, version: '1' } },
+      }),
+    });
+    await res.json();
+    return res.headers.get('mcp-session-id') ?? '';
+  };
+  const asAgent = async (
+    session: string,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'mcp-session-id': session },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } }),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await res.json();
+    return json.result?.content?.[0]?.text ?? '';
+  };
+
+  /**
+   * Announce a file and rewrite it, so the write carries this session's name.
+   *
+   * Files the fixture already has, and keeping the exports they had: the point
+   * here is who a change is attributed to, and inventing new modules would
+   * change the graph under every test that follows.
+   */
+  const writeAs = async (session: string, file: string, content: string): Promise<string> => {
+    const reply = await asAgent(session, 'chat_post', {
+      kind: 'taking',
+      paths: [file],
+      text: `taking ${file}`,
+    });
+    const name = /posted as ([A-Za-z]+ \d+)/.exec(reply)?.[1] ?? '';
+    expect(name).not.toBe('');
+    write(file, content);
+    /*
+     * Wait for this author to reach the panel before the next one writes.
+     *
+     * Not politeness — correctness. The watcher batches, and two writes that
+     * arrive in one batch are one set of paths with two claimants, which
+     * attributes to neither of them. Letting each write land on its own is the
+     * difference between three authors and one shrug.
+     */
+    // the panel itself, not its ledger: with nothing reviewed yet the ledger
+    // does not exist, because the panel is still showing its empty state
+    await expect(page.getByTestId('review-panel')).toContainText(name, { timeout: 40_000 });
+    return name;
+  };
+
+  /*
+   * A stamp in each file, so a re-run is a change.
+   *
+   * Without it the second run of this test writes the bytes the first one left
+   * behind, nothing on disk actually differs, and there is no write to
+   * attribute to anybody — the test would pass once and then fail forever.
+   */
+  const stamp = Date.now();
+
+  // the panel is open while the writes land, because that is what each one
+  // waits on before the next begins
+  await page.getByTestId('tab-review').click();
+  await expect(page.getByTestId('review-panel')).toBeVisible();
+
+  // two sessions of one tool, one of another: the case where "who" and "which
+  // tool" stop being the same question
+  const claudeA = await writeAs(
+    await connect('claude-code'),
+    'src/util.ts',
+    `export function util() {
+  // rewritten by the first session, ${stamp}
+  return 1;
+}
+`,
+  );
+  const claudeB = await writeAs(
+    await connect('claude-code'),
+    'src/lib/helper.ts',
+    `import { util } from '../util';
+
+// second session, ${stamp}
+export function helper() {
+  return util() * 2;
+}
+`,
+  );
+  const codex = await writeAs(
+    await connect('codex'),
+    'tools/common.py',
+    `def shared():
+    # rewritten by the codex session, ${stamp}
+    return 42
+`,
+  );
+  expect(claudeA).not.toBe(claudeB);
+  expect(codex).toMatch(/^Codex /);
+
+  // the row appears only once there is more than one author, which by now
+  // there is — all three landed on the way in
+  const chips = page.getByTestId('review-agents');
+  await expect(chips).toBeVisible({ timeout: 20_000 });
+  for (const name of [claudeA, claudeB, codex]) {
+    await expect(chips).toContainText(name, { timeout: 30_000 });
+  }
+  // scoped to the ledger: the timeline strip above it is `burst-strip`, which
+  // a prefix match would otherwise pick up as one enormous card
+  const cards = page.getByTestId('review-side').locator('[data-testid^="burst-"]');
+
+  // the tool chip is there because the tool ran more than one session
+  const claudeTool = page.getByTestId('review-tool-claude');
+  await expect(claudeTool).toBeVisible();
+  await expect(claudeTool).toContainText('Claude');
+  // a session can leave more than one burst behind, so what matters either way
+  // is whether any of its work is on screen — not how many cards it took
+  await expect(cards.filter({ hasText: codex }).first()).toBeVisible();
+
+  /*
+   * And each card carries its own agent's sentence.
+   *
+   * An announced goal used to be stapled to whatever burst was newest, so with
+   * three sessions announcing and writing in turn every card showed the *next*
+   * agent's claim — one agent's stated intent presented as evidence about
+   * another agent's diff.
+   */
+  await expect(cards.filter({ hasText: claudeA }).first()).toContainText('taking src/util.ts');
+  await expect(cards.filter({ hasText: claudeB }).first()).toContainText(
+    'taking src/lib/helper.ts',
+  );
+  await expect(cards.filter({ hasText: codex }).first()).toContainText('taking tools/common.py');
+
+  // by tool: both Claudes stay, the Codex goes
+  await claudeTool.click();
+  await expect(cards.filter({ hasText: claudeA }).first()).toBeVisible();
+  await expect(cards.filter({ hasText: claudeB }).first()).toBeVisible();
+  await expect(cards.filter({ hasText: codex })).toHaveCount(0);
+
+  // by name: one session of that tool, not the other. The chip's testid
+  // carries the MCP session id rather than the display name, so this reaches
+  // for it the way a person does — by what it says.
+  const named = (name: string) =>
+    chips.locator('button.review-agent:not(.tool)').filter({ hasText: name });
+  await named(claudeA).click();
+  await expect(cards.filter({ hasText: claudeA }).first()).toBeVisible();
+  await expect(cards.filter({ hasText: claudeB })).toHaveCount(0);
+
+  // clicking the live filter again is how you get everyone back
+  await named(claudeA).click();
+  await expect(cards.filter({ hasText: codex }).first()).toBeVisible();
+  await expect(cards.filter({ hasText: claudeB }).first()).toBeVisible();
+
+  await page.getByTestId('tab-graph').click();
+});
+
 test('find in files: matches open at their line, and replace-all is one confirmation away', async () => {
   await page.getByTestId('tab-graph').click();
   write('src/needle.ts', ['export const needle = 1;', '// a needle in the comment too', ''].join('\n'));
@@ -2351,4 +2533,138 @@ test('find in files: matches open at their line, and replace-all is one confirma
     .toContain('const pin = 1');
   await page.keyboard.press('Escape');
   await page.getByTestId('search-input').fill('');
+});
+
+test('a markdown card is marked on the canvas, and double-click reads it there', async () => {
+  // Whatever the last test left open, get it out of the way first. The palette
+  // takes Escape on its own input rather than on the window, so reaching for
+  // the keyboard from wherever focus happens to be does not dismiss it.
+  if ((await page.getByTestId('palette').count()) > 0) {
+    await page.getByTestId('palette-input').click();
+    await page.keyboard.press('Escape');
+  }
+  await expect(page.getByTestId('palette')).toBeHidden();
+  await page.getByTestId('tab-graph').click();
+
+  // a document worth rendering: a heading, prose, a list, code, a link on
+  // into the source — the shapes a plan or a decision record actually uses
+  write(
+    'README.md',
+    [
+      '# Fixture, the document',
+      '',
+      'The graph is a map of a codebase, and a good part of what a codebase says',
+      'about itself is prose.',
+      '',
+      '## What is in here',
+      '',
+      '- `src/app.ts` — the entry point',
+      '- `tools/` — the python side',
+      '',
+      '```ts',
+      'export function main() {}',
+      '```',
+      '',
+      'See [the helper](src/lib/helper.ts) for the other half.',
+      '',
+    ].join('\n'),
+  );
+
+  // "no tab was opened" has to be measured, not assumed: earlier tests in this
+  // file have opened editors of their own, and the claim here is that peeking
+  // adds none
+  const fileTabs = page.locator('[data-testid^="tab-file:"]');
+  const tabsBefore = await fileTabs.count();
+
+  // the card says it is prose before you click anything
+  const card = page.getByTestId('gcard-README.md');
+  await expect(card).toHaveClass(/(^|\s)doc(\s|$)/);
+  await expect(card.locator('.gdoc')).toHaveText('¶');
+  // and code is not dressed up as prose
+  await expect(page.getByTestId('gcard-src/app.ts')).not.toHaveClass(/(^|\s)doc(\s|$)/);
+
+  // double-click renders it over the graph rather than taking you to an editor
+  await card.dblclick();
+  const peek = page.getByTestId('file-peek');
+  await expect(peek).toBeVisible();
+  await expect(peek.getByTestId('file-peek-name')).toHaveText('README.md');
+  await expect(peek.locator('h1')).toHaveText('Fixture, the document');
+  await expect(peek.locator('code').first()).toHaveText('src/app.ts');
+  // the graph is still behind it — this is a peek, not a navigation
+  await expect(page.getByTestId('tab-graph')).toBeVisible();
+  await expect(fileTabs).toHaveCount(tabsBefore);
+
+  // Escape is the reflex, and it puts it away without opening anything
+  await page.keyboard.press('Escape');
+  await expect(peek).toBeHidden();
+  await expect(fileTabs).toHaveCount(tabsBefore);
+
+  // reading turns into changing: the editor is one button along
+  await card.dblclick();
+  await expect(peek).toBeVisible();
+  await page.getByTestId('file-peek-open').click();
+  await expect(peek).toBeHidden();
+  await expect(page.getByTestId('doc-README.md')).toBeVisible();
+
+  await page.getByTestId('tab-graph').click();
+
+  // a long document scrolls inside the peek rather than running off the end
+  const paragraphs = Array.from({ length: 120 }, (_, i) => `Paragraph ${i}, of a plan that goes on.`);
+  write('README.md', ['# Long', ...paragraphs].join('\n\n'));
+  await card.dblclick();
+  const scroller = page.getByTestId('file-peek-body');
+  await expect(scroller).toBeVisible();
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollHeight > el.clientHeight + 40))
+    .toBe(true);
+  await scroller.evaluate((el) => {
+    el.scrollTop = 600;
+  });
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(100);
+  await page.keyboard.press('Escape');
+  await expect(peek).toBeHidden();
+});
+
+test('double-clicking code peeks at it in the editor Flare uses everywhere', async () => {
+  await page.keyboard.press('Escape');
+  await page.getByTestId('tab-graph').click();
+  const fileTabs = page.locator('[data-testid^="tab-file:"]');
+  const tabsBefore = await fileTabs.count();
+
+  /*
+   * Not only documents: everything on the map opens where you found it.
+   *
+   * Dispatched rather than pointed at. By this point in the file the fixture
+   * has grown enough that cards overlap, and a real double-click lands on
+   * whichever badge happens to be on top — which is a fact about the layout at
+   * the end of a long suite, not about this feature. The pointer path is
+   * covered by the markdown test above, which runs on a graph small enough to
+   * click honestly.
+   */
+  await page.getByTestId('gcard-src/app.ts').dispatchEvent('dblclick');
+  const peek = page.getByTestId('file-peek');
+  await expect(peek).toBeVisible();
+  await expect(peek.getByTestId('file-peek-name')).toHaveText('app.ts');
+  await expect(peek.getByTestId('file-peek-code')).toBeVisible();
+  await expect(peek.locator('.view-lines')).toContainText('export function main', {
+    timeout: 20_000,
+  });
+
+  // a peek never holds unsaved work, which is what lets Escape be enough
+  await expect(peek.locator('textarea.monaco-mouse-cursor-text')).toHaveAttribute(
+    'readonly',
+    'true',
+  );
+
+  await expect(fileTabs).toHaveCount(tabsBefore);
+
+  await page.keyboard.press('Escape');
+  await expect(peek).toBeHidden();
+
+  // and Open & edit still hands over to the real editor
+  await page.getByTestId('gcard-src/app.ts').dispatchEvent('dblclick');
+  await page.getByTestId('file-peek-open').click();
+  await expect(peek).toBeHidden();
+  await expect(page.getByTestId('editor-src/app.ts')).toBeVisible();
+  await page.getByTestId('tab-graph').click();
 });

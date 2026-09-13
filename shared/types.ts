@@ -1,6 +1,6 @@
 /** Shared data model used by main process, renderer and tests. */
 
-export type Lang = 'ts' | 'tsx' | 'js' | 'jsx' | 'py' | 'other';
+export type Lang = 'ts' | 'tsx' | 'js' | 'jsx' | 'py' | 'md' | 'other';
 
 export type SymbolKind = 'function' | 'class' | 'variable' | 'type';
 
@@ -60,6 +60,17 @@ export interface GraphNode {
   cycleId: number | null;
   /** TODO/FIXME/HACK/XXX marker count. */
   todos: number;
+  /**
+   * Prose rather than code.
+   *
+   * A README, a plan, a decision an agent wrote down: on the graph because it
+   * is part of what the repo says about itself and because the links in it are
+   * real edges, but not code, and so not something to measure. Everything that
+   * judges a file — untested, orphaned, complex, uncovered — asks this first
+   * and leaves documents alone. A document that "has no tests" is not a
+   * finding, it is a category error with a red badge on it.
+   */
+  doc: boolean;
 }
 
 export interface GraphEdge {

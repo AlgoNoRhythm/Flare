@@ -350,8 +350,8 @@ the active lens, cluster bands are coloured by directory.*
   `list_projects`. **Connect agent**, in the terminal bar, opens a dialog with
   the two steps — and they are genuinely two. Registering the server is a
   config change you make once per machine, and it is different for each of the
-  three: a command for Claude Code, TOML for Codex, JSON for opencode, in
-  different files in different places.
+  three: a command for Claude Code, a command for Codex, JSON in a file of its
+  own for opencode.
 
   ```sh
   claude mcp add --transport http flare http://127.0.0.1:7345/mcp/<slug>

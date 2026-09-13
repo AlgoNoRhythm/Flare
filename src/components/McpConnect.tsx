@@ -7,9 +7,10 @@ import { toast } from './Toasts';
  *
  * The status bar has always been able to copy a `claude mcp add` line, but
  * that is one of three agents this app is built around — the terminal's own
- * hint says "claude · codex · opencode" — and the other two are not commands,
- * they are config files in different formats and different places. Guessing
- * either is worse than no help at all, so both are spelled out.
+ * hint says "claude · codex · opencode" — and the other two register
+ * differently: Codex has grown a command of its own, opencode is still a JSON
+ * file in a place of its own. Guessing is worse than no help at all, so all
+ * three are spelled out.
  */
 export interface McpTarget {
   id: string;
@@ -29,11 +30,17 @@ export const MCP_TARGETS: McpTarget[] = [
   {
     id: 'codex',
     label: 'Codex',
-    where: '~/.codex/config.toml',
-    // the features block is only needed by older builds, but it is harmless on
-    // new ones and leaving it out is the failure people actually hit
-    snippet: (url) =>
-      `[features]\nexperimental_use_rmcp_client = true\n\n[mcp_servers.flare]\nurl = "${url}"`,
+    where: 'run in a shell',
+    /*
+     * Codex used to be TOML you edited by hand, behind a feature flag —
+     * `experimental_use_rmcp_client`, without which a `url =` server was
+     * simply ignored. The flag is gone (0.154 does not contain the string, and
+     * a plain `[mcp_servers.flare] url = …` connects on its own), and
+     * `codex mcp add` now takes `--url`, so this is a command like Claude
+     * Code's rather than a file to go and find. Handing someone a dead feature
+     * flag to paste into their config is worse than handing them nothing.
+     */
+    snippet: (url) => `codex mcp add flare --url ${url}`,
   },
   {
     id: 'opencode',

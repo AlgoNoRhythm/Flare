@@ -223,7 +223,9 @@ export function deriveRenderModel(
       agg.complexity += node.complexity;
       if (node.cycleId !== null) agg.cycles++;
       if (node.orphan) agg.orphans++;
-      if (!node.isTest && node.testedBy === 0) agg.untested++;
+      // a folder's "untested" count is about its code; the plans inside it
+      // are not files anybody was ever going to write a test for
+      if (!node.doc && !node.isTest && node.testedBy === 0) agg.untested++;
       continue;
     }
     if (view.expandedFiles.has(node.id) && symbolGraphs.has(node.id)) {

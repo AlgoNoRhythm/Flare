@@ -249,6 +249,34 @@ export function resolveImport(
   index: Set<string>,
   opts: ResolverOptions = {},
 ): string | null {
+  if (DOC_RE.test(fromPath)) return resolveDocLink(fromPath, spec, index);
   if (fromPath.endsWith('.py')) return resolvePy(fromPath, spec, index, opts);
   return resolveJs(fromPath, spec, index, opts);
+}
+
+const DOC_RE = /\.(md|mdx|markdown)$/i;
+
+/**
+ * Where a link in a document points.
+ *
+ * Deliberately not the JS resolver. A module specifier is a name to be looked
+ * up — extensions guessed, index files tried, `node_modules` and tsconfig
+ * paths consulted — and a markdown link is none of that: it is a path, written
+ * relative to the file it is written in, and it either names something in the
+ * repo or it does not. Running it through the JS resolver would let `see the
+ * [notes](notes)` resolve to `notes.ts`, which is a link the author did not
+ * write.
+ *
+ * The one convenience kept is the one every forge implements: a link to a
+ * directory means that directory's README.
+ */
+function resolveDocLink(fromPath: string, spec: string, index: Set<string>): string | null {
+  const base = dirname(fromPath);
+  const target = joinPosix(base === '.' ? '' : base, spec);
+  if (index.has(target)) return target;
+  for (const inside of ['README.md', 'readme.md', 'index.md']) {
+    const candidate = joinPosix(target, inside);
+    if (index.has(candidate)) return candidate;
+  }
+  return null;
 }

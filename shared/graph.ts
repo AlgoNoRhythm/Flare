@@ -246,7 +246,8 @@ export class GraphBuilder {
 
     const clusterOf = this.computeClusterOf();
     const nodes: GraphNode[] = [...this.files.values()].map((f) => {
-      const isTest = isTestPath(f.path);
+      const doc = f.lang === 'md';
+      const isTest = !doc && isTestPath(f.path);
       const inDegree = inDeg.get(f.path) ?? 0;
       return {
         id: f.path,
@@ -260,9 +261,18 @@ export class GraphBuilder {
         externalModules: external.get(f.path) ?? [],
         testedBy: testedBy.get(f.path) ?? 0,
         isTest,
-        orphan: !isTest && inDegree === 0 && topDir(f.path) !== '' && !isEntryLike(f.path),
+        /*
+         * Never a document.
+         *
+         * "Nothing imports this" is a finding about code — a module that got
+         * left behind. A plan nobody links to is just a plan, and flagging
+         * every one of them would make the orphan lens useless in the repos
+         * that write the most down.
+         */
+        orphan: !doc && !isTest && inDegree === 0 && topDir(f.path) !== '' && !isEntryLike(f.path),
         cycleId: cycleIds.get(f.path) ?? null,
         todos: f.todos,
+        doc,
       };
     });
     const edges = [...edgeWeights].map(([key, weight]) => edgeFromKey(key, weight));
@@ -388,6 +398,7 @@ function nodesEqual(a: GraphNode, b: GraphNode): boolean {
     a.externalModules.join() === b.externalModules.join() &&
     a.testedBy === b.testedBy &&
     a.orphan === b.orphan &&
+    a.doc === b.doc &&
     a.cycleId === b.cycleId &&
     a.todos === b.todos &&
     a.symbols.length === b.symbols.length &&

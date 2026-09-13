@@ -173,6 +173,9 @@ export function lensHue(lens: Lens): string {
  * heuristic.
  */
 export function riskScore(node: GraphNode, coveragePct?: number): number {
+  // a document carries no risk of the kind this scores: nothing branches
+  // through it and nothing breaks when it is wrong in the way code is wrong
+  if (node.doc) return 0;
   const dependents = 1 + Math.log2(1 + node.inDegree);
   const complexity = 1 + node.complexity / 25;
   const untested =

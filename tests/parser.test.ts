@@ -204,6 +204,9 @@ describe('detectLang', () => {
     expect(detectLang('a.tsx')).toBe('tsx');
     expect(detectLang('a.py')).toBe('py');
     expect(detectLang('a.mjs')).toBe('js');
-    expect(detectLang('README.md')).toBe('other');
+    // prose is a language here: it is on the graph, and its links are edges
+    expect(detectLang('README.md')).toBe('md');
+    expect(detectLang('notes.markdown')).toBe('md');
+    expect(detectLang('a.txt')).toBe('other');
   });
 });

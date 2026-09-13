@@ -94,6 +94,16 @@ export interface SessionEvents {
   onSummaries: (summaries: SessionSummary[]) => void;
 }
 
+/**
+ * The key an announced goal is filed under: the MCP session, or '' for a
+ * caller that never identified itself. Anonymous intents still pair with
+ * anonymous writes, which is exactly how this behaved before there was
+ * anyone to tell apart.
+ */
+function intentKey(agentId: string | undefined): string {
+  return agentId ?? '';
+}
+
 /** Writes closer together than this belong to the same burst. */
 const BURST_GAP_MS = Number(process.env.FLARE_BURST_GAP_MS) || 25_000;
 /** Per-terminal output kept for reading verification verdicts. */
@@ -165,7 +175,18 @@ export class ProjectSession {
   private termBuffers = new Map<string, { text: string; dropped: number }>();
   /** pid -> where in its terminal's output the command started */
   private commandStarts = new Map<number, { terminalId: string; offset: number }>();
-  private pendingIntent: BurstIntent | null = null;
+  /**
+   * Announced goals waiting for the write that fulfils them, per agent.
+   *
+   * A map rather than one slot, and consumed only by the agent that put it
+   * there. With one agent the distinction is invisible. With three it is the
+   * difference between a review that reads *"Claude 2 — taking
+   * tools/common.py"* over a change to `src/lib/helper.ts`, and one that says
+   * what actually happened: an intent is the strongest claim an agent makes
+   * about its own work, and handing it to whoever wrote next is worse than
+   * having none, because it reads as evidence.
+   */
+  private pendingIntents = new Map<string, BurstIntent>();
   /**
    * What each agent announced it was about to do, one entry per MCP session.
    *
@@ -471,9 +492,10 @@ export class ProjectSession {
       ? last?.agentId === attributed.agentId
       : last?.agent === agent && !last?.agentId;
     if (last && sameAuthor && now - last.endedAt < BURST_GAP_MS) {
-      if (this.pendingIntent && !last.intent) {
-        last.intent = this.pendingIntent;
-        this.pendingIntent = null;
+      const pending = this.pendingIntents.get(intentKey(attributed.agentId));
+      if (pending && !last.intent) {
+        last.intent = pending;
+        this.pendingIntents.delete(intentKey(attributed.agentId));
       }
       return last;
     }
@@ -491,10 +513,10 @@ export class ProjectSession {
       verification: 'not-run',
       verifiedBy: null,
       checks: [],
-      intent: this.pendingIntent,
+      intent: this.pendingIntents.get(intentKey(attributed.agentId)) ?? null,
       snapshotHash: null,
     };
-    this.pendingIntent = null;
+    this.pendingIntents.delete(intentKey(attributed.agentId));
     this.bursts.push(burst);
     this.burstStates.set(burst.id, new Map());
     this.burstDegree.set(burst.id, new Map());
@@ -800,12 +822,22 @@ export class ProjectSession {
       }
     }
     const intent: BurstIntent = { goal, ruledOut, at: Date.now(), source };
+    const key = intentKey(callerId ? `mcp:${callerId}` : undefined);
+    /*
+     * Back-fill only onto this agent's own last burst.
+     *
+     * An agent that writes and *then* says why meant the thing it just wrote,
+     * and that is worth catching. An agent announcing work while somebody
+     * else's change is still the newest one on the board meant nothing of the
+     * sort — attaching it there put one agent's sentence on another agent's
+     * diff, which is precisely the confusion the whole panel exists to remove.
+     */
     const last = this.bursts[this.bursts.length - 1];
-    if (last && Date.now() - last.endedAt < BURST_GAP_MS) {
+    if (last && intentKey(last.agentId) === key && Date.now() - last.endedAt < BURST_GAP_MS) {
       last.intent = intent;
       if (!this.disposed) this.events.onActivity(this.bursts);
     } else {
-      this.pendingIntent = intent;
+      this.pendingIntents.set(key, intent);
     }
   }
 

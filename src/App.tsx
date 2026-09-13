@@ -25,6 +25,7 @@ import type { RecentEntry } from '../electron/core';
 import { DiffPane } from './components/DiffPane';
 import { EditorPane } from './components/EditorPane';
 import { DocumentPane } from './components/DocumentPane';
+import { FilePeek } from './components/FilePeek';
 import { previewKindFor } from '../shared/preview';
 import { plural, when } from './format';
 import { clampTerminal, openingTerminalHeight } from './layout';
@@ -239,6 +240,14 @@ export function App() {
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; entries: { path: string; isDir: boolean }[] } | null>(null);
   const [modal, setModal] = useState<ModalRequest | null>(null);
+  /**
+   * The file being read over the graph, if any.
+   *
+   * A path rather than a boolean-plus-path: following a link from one file to
+   * the next is just another value here, so the peek keeps no history of its
+   * own and Escape always means the same thing.
+   */
+  const [peekFile, setPeekFile] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [lens, setLens] = useState<Lens>('clusters');
   /*
@@ -2717,7 +2726,10 @@ export function App() {
                         <span>{selection.members.filter((n) => n.cycleId !== null).length}</span>
                         <span className="k">untested</span>
                         <span>
-                          {selection.members.filter((n) => !n.isTest && n.testedBy === 0).length}
+                          {
+                            selection.members.filter((n) => !n.doc && !n.isTest && n.testedBy === 0)
+                              .length
+                          }
                         </span>
                       </div>
                       <div className="actions">
@@ -3019,6 +3031,7 @@ export function App() {
                     onBoxSelect={boxSelect}
                     onNodeContextMenu={openContextMenu}
                     onOpenFile={openFile}
+                    onPeekFile={setPeekFile}
                     onToggleDir={toggleDir}
                     onStats={setStats}
                     onZoom={setZoomPct}
@@ -3519,6 +3532,14 @@ ${l.reading}`}
         <NewProjectDialog hasProject={project !== null} onClose={() => setNewProjectOpen(false)} />
       )}
       {modal && <Modal request={modal} onClose={() => setModal(null)} />}
+      {peekFile !== null && (
+        <FilePeek
+          path={peekFile}
+          onOpenFile={openFile}
+          onPeek={setPeekFile}
+          onClose={() => setPeekFile(null)}
+        />
+      )}
       {/*
         One corner, two kinds of message: receipts on top, the queue below.
 

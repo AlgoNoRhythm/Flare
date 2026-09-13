@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ago, num } from '../format';
 import { agentIdOf, agentLabelOf, agentNameOf, type Conflict } from '../../shared/conflicts';
 import type { Decision, Question } from '../../shared/tasks';
@@ -25,6 +25,7 @@ import { SessionStory } from './SessionStory';
 import { HintNote } from './HintNote';
 import { UI_STATUS, info } from '../theme';
 import { agentColor, agentShape } from '../graph/lenses';
+import { KNOWN_TOOLS } from '../../shared/roster';
 
 /**
  * The review cockpit.
@@ -165,8 +166,19 @@ export function ReviewPanel({
   const newest = bursts.length > 0 ? bursts[bursts.length - 1].id : null;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(newest ? [newest] : []));
   const [onlyProblems, setOnlyProblems] = useState(false);
-  /** show only one agent's changes; null is everyone's */
-  const [agentFilter, setAgentFilter] = useState<string | null>(null);
+  /**
+   * Whose changes to show; null is everyone's.
+   *
+   * Two kinds, because "who" has two honest answers in a room with several
+   * agents in it. *Claude 2* is one session and one ordinal — the identity
+   * every conflict and every burst is attributed to. *Claude* is the tool, and
+   * the question behind it is different: **did the codex run break anything**,
+   * across whichever of its sessions happened to be alive. Collapsing the two
+   * would mean picking one of those questions and refusing the other.
+   */
+  const [who, setWho] = useState<{ kind: 'tool' | 'agent'; value: string } | null>(null);
+  const pick = (kind: 'tool' | 'agent', value: string): void =>
+    setWho((prev) => (prev?.kind === kind && prev.value === value ? null : { kind, value }));
   /**
    * Tier groups whose fold has been toggled by hand, keyed `burst:tier`.
    * Only the exceptions are kept: the default is worked out per burst.
@@ -325,13 +337,23 @@ export function ReviewPanel({
   const byAgent = useMemo(() => {
     const out = new Map<
       string,
-      { id: string; name: string; bursts: number; files: number; unverified: number; smells: number }
+      {
+        id: string;
+        name: string;
+        /** the tool behind the name — 'claude', 'codex' — for the provider row */
+        tool: string;
+        bursts: number;
+        files: number;
+        unverified: number;
+        smells: number;
+      }
     >();
     for (const burst of bursts) {
       const id = agentIdOf(burst);
       const entry = out.get(id) ?? {
         id,
         name: agentNameOf(burst),
+        tool: burst.agent,
         bursts: 0,
         files: 0,
         unverified: 0,
@@ -349,9 +371,47 @@ export function ReviewPanel({
     return [...out.values()].sort((a, b) => b.files - a.files);
   }, [bursts]);
 
+  /**
+   * The providers, and how many of each are in the room.
+   *
+   * A provider chip earns its place when the tool ran more than one session:
+   * with a single Codex there is nothing "all of Codex" says that "Codex 1"
+   * does not, and a second chip meaning the same thing is worse than none.
+   */
+  const byTool = useMemo(() => {
+    const out = new Map<string, { tool: string; agents: number; files: number; unverified: number }>();
+    for (const a of byAgent) {
+      const entry = out.get(a.tool) ?? { tool: a.tool, agents: 0, files: 0, unverified: 0 };
+      entry.agents++;
+      entry.files += a.files;
+      entry.unverified += a.unverified;
+      out.set(a.tool, entry);
+    }
+    return out;
+  }, [byAgent]);
+
+  /*
+   * Chips in tool order, so a provider's own sessions sit under it.
+   *
+   * `byAgent` is sorted by weight, which is right for reading "who wrote the
+   * most" and wrong for a row where a heading has to lead the things it
+   * heads: with Claude 1, Codex 1, Claude 2 in that order, the Claude chip
+   * would stand in front of a Codex.
+   */
+  const agentChips = useMemo(() => {
+    const weight = (tool: string): number => byTool.get(tool)?.files ?? 0;
+    return [...byAgent].sort(
+      (a, b) =>
+        weight(b.tool) - weight(a.tool) || a.tool.localeCompare(b.tool) || b.files - a.files,
+    );
+  }, [byAgent, byTool]);
+
   const visible = ordered
     .filter((b) => !onlyProblems || b.verification !== 'passed' || b.smells.length > 0)
-    .filter((b) => agentFilter === null || agentIdOf(b) === agentFilter);
+    .filter((b) => {
+      if (who === null) return true;
+      return who.kind === 'agent' ? agentIdOf(b) === who.value : b.agent === who.value;
+    });
 
   const unverified = bursts.filter(
     (b) => b.verification === 'not-run' || b.verification === 'stale' || b.verification === 'failed',
@@ -468,23 +528,48 @@ export function ReviewPanel({
         */}
         {byAgent.length > 1 && (
           <div className="review-agents" data-testid="review-agents">
-            {byAgent.map((a) => (
-              <button
-                key={a.id}
-                className={`review-agent${agentFilter === a.id ? ' on' : ''}`}
-                style={{ '--agent': agentColor(a.id) } as React.CSSProperties}
-                title={`${a.name} — ${a.bursts} change${a.bursts === 1 ? '' : 's'}, ${a.files} file${
-                  a.files === 1 ? '' : 's'
-                }, ${a.unverified} unverified${a.smells > 0 ? `, ${a.smells} smell${a.smells === 1 ? '' : 's'}` : ''}.\nClick to show only its changes.`}
-                onClick={() => setAgentFilter((prev) => (prev === a.id ? null : a.id))}
-                data-testid={`review-agent-${a.id}`}
-              >
-                <span className="review-agent-mark">{agentShape(a.id)}</span>
-                {a.name}
-                <span className="review-agent-files">{a.files}</span>
-                {a.unverified > 0 && <span className="review-agent-unver">{a.unverified}✗</span>}
-              </button>
-            ))}
+            {agentChips.map((a) => {
+              const group = byTool.get(a.tool);
+              // the provider chip leads its own agents, and only when it means
+              // something they do not: two or more sessions of the same tool
+              const lead =
+                group !== undefined && group.agents > 1 && agentChips.find((x) => x.tool === a.tool) === a;
+              return (
+                <Fragment key={a.id}>
+                  {lead && (
+                    <button
+                      className={`review-agent tool${who?.kind === 'tool' && who.value === a.tool ? ' on' : ''}`}
+                      style={{ '--agent': agentColor(a.tool) } as React.CSSProperties}
+                      title={`Every ${toolLabel(a.tool)} session this run — ${group.agents} of them, ${
+                        group.files
+                      } file${group.files === 1 ? '' : 's'}, ${group.unverified} unverified.
+Click to show all of them at once.`}
+                      onClick={() => pick('tool', a.tool)}
+                      data-testid={`review-tool-${a.tool}`}
+                    >
+                      {toolLabel(a.tool)}
+                      <span className="review-agent-files">{group.files}</span>
+                      {group.unverified > 0 && <span className="review-agent-unver">{group.unverified}✗</span>}
+                    </button>
+                  )}
+                  <button
+                    className={`review-agent${who?.kind === 'agent' && who.value === a.id ? ' on' : ''}`}
+                    style={{ '--agent': agentColor(a.id) } as React.CSSProperties}
+                    title={`${a.name} — ${a.bursts} change${a.bursts === 1 ? '' : 's'}, ${a.files} file${
+                      a.files === 1 ? '' : 's'
+                    }, ${a.unverified} unverified${a.smells > 0 ? `, ${a.smells} smell${a.smells === 1 ? '' : 's'}` : ''}.
+Click to show only its changes.`}
+                    onClick={() => pick('agent', a.id)}
+                    data-testid={`review-agent-${a.id}`}
+                  >
+                    <span className="review-agent-mark">{agentShape(a.id)}</span>
+                    {a.name}
+                    <span className="review-agent-files">{a.files}</span>
+                    {a.unverified > 0 && <span className="review-agent-unver">{a.unverified}✗</span>}
+                  </button>
+                </Fragment>
+              );
+            })}
           </div>
         )}
         <button
@@ -833,4 +918,18 @@ export function ReviewPanel({
       </div>
     </div>
   );
+}
+
+/**
+ * What to call a provider on a chip.
+ *
+ * The roster's spelling, so "Codex" is the same word here, in the channel and
+ * on an agent's own name. `you` and `mixed` are not tools and are left as the
+ * sentences they already are: one means a human, the other means the session
+ * could not tell — and a filter for "we do not know who" is worth having.
+ */
+function toolLabel(tool: string): string {
+  if (tool === 'you') return 'You';
+  if (tool === 'mixed') return 'Unattributed';
+  return KNOWN_TOOLS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
 }

@@ -1,4 +1,5 @@
 import type { ImportDecl, Lang, ParsedFile, SymbolInfo } from './types';
+import { parseMarkdown, type Block, type Inline } from './markdown';
 import { extname, toPosix } from './paths';
 
 const EXT_TO_LANG: Record<string, Lang> = {
@@ -11,6 +12,18 @@ const EXT_TO_LANG: Record<string, Lang> = {
   '.cjs': 'js',
   '.jsx': 'jsx',
   '.py': 'py',
+  /*
+   * Prose is a language here too.
+   *
+   * Not so it can be measured — a document has no complexity worth reporting —
+   * but so it can be *placed*. A repo's README, its plans and its decision
+   * records are part of what it is, and they were the one part the map left
+   * out: present in the tree, absent from the graph, findable only by
+   * remembering they existed.
+   */
+  '.md': 'md',
+  '.mdx': 'md',
+  '.markdown': 'md',
 };
 
 export const CODE_EXTENSIONS = new Set(Object.keys(EXT_TO_LANG));
@@ -402,6 +415,7 @@ function countTodos(content: string): number {
 
 export function parseFile(path: string, content: string): ParsedFile {
   const lang = detectLang(path);
+  if (lang === 'md') return parseDoc(path, content);
   if (lang === 'py') return parsePython(path, content);
   if (lang === 'other') {
     return {
@@ -415,4 +429,95 @@ export function parseFile(path: string, content: string): ParsedFile {
     };
   }
   return parseJsLike(path, content, lang);
+}
+
+/**
+ * A document, as the graph sees it.
+ *
+ * The interesting thing in a markdown file is not its prose, it is what the
+ * prose points at. A README that says "see [the helper](src/lib/helper.ts)"
+ * has told you something the import graph cannot: that this file is *about*
+ * that one. So the links become imports and the document becomes a node with
+ * real edges, sitting beside the code it describes instead of off in a corner
+ * of the canvas by itself.
+ *
+ * Read out of the parsed document rather than by regex, which is what keeps a
+ * path inside a fenced code block — an example, a shell command — from being
+ * mistaken for a reference to it.
+ *
+ * Every link is marked speculative. An unresolved import means "a package",
+ * and that is a sentence about code; an unresolved *link* means the link is
+ * broken, or points at something outside the repo, and neither belongs in a
+ * list of this document's dependencies.
+ */
+function parseDoc(path: string, content: string): ParsedFile {
+  const counts = new Map<string, number>();
+
+  const walkInline = (nodes: Inline[]): void => {
+    for (const node of nodes) {
+      if (node.type === 'link') {
+        const href = docTarget(node.href);
+        if (href !== null) counts.set(href, (counts.get(href) ?? 0) + 1);
+        walkInline(node.children);
+      } else if (node.type === 'strong' || node.type === 'em' || node.type === 'del') {
+        walkInline(node.children);
+      }
+    }
+  };
+
+  const walkBlocks = (blocks: Block[]): void => {
+    for (const block of blocks) {
+      switch (block.type) {
+        case 'heading':
+        case 'paragraph':
+          walkInline(block.children);
+          break;
+        case 'list':
+          for (const item of block.items) walkBlocks(item.children);
+          break;
+        case 'quote':
+          walkBlocks(block.children);
+          break;
+        case 'table':
+          for (const cell of [...block.head, ...block.rows.flat()]) walkInline(cell);
+          break;
+        default:
+          // code, hr, html: nothing that counts as a reference
+          break;
+      }
+    }
+  };
+
+  walkBlocks(parseMarkdown(content));
+
+  const imports: ImportDecl[] = [...counts]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([spec, n]) => ({ spec, bindings: { link: n }, speculative: true }));
+
+  return {
+    path: toPosix(path),
+    lang: 'md',
+    imports,
+    symbols: [],
+    loc: countLoc(content),
+    // a document has no branches; reporting 0 is honest, and the lenses that
+    // read this are told to skip documents anyway
+    complexity: 0,
+    todos: countTodos(content),
+  };
+}
+
+/**
+ * The project file a link points at, or null when it points somewhere else.
+ *
+ * Anchors, `http:`, `mailto:` and friends are not files. What is left is a
+ * path, and it is written relative to the document, so it is handed on with
+ * its fragment and query trimmed and resolved by the resolver.
+ */
+function docTarget(href: string): string | null {
+  const trimmed = href.trim();
+  if (trimmed === '' || trimmed.startsWith('#')) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
+  const clean = trimmed.split('#')[0].split('?')[0];
+  return clean === '' ? null : clean;
 }

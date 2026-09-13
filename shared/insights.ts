@@ -221,7 +221,18 @@ function percentile(sorted: number[], p: number): number {
 }
 
 export function computeInsights(input: InsightsInput): Insights {
-  const { nodes, edges, churn, coverage, changedAt, changedBy, review, snapshots } = input;
+  const { edges, churn, coverage, changedAt, changedBy, review, snapshots } = input;
+  /*
+   * Insights are about code, so documents are not in them.
+   *
+   * Every ranking below — riskiest, hottest, worth refactoring, untested,
+   * orphaned — is a judgement with an implied remedy, and none of the remedies
+   * apply to a README. Dropping them at the door is one line and it keeps the
+   * exemption from having to be repeated in each of the dozen places that
+   * would otherwise have to remember. The *edges* stay, so a document still
+   * counts towards the blast radius of the code it points at.
+   */
+  const nodes = input.nodes.filter((n) => !n.doc);
   const blast = allBlastRadii(nodes, edges);
   const drag = allDrag(nodes, edges);
   const session = sessionChurnAndCoupling(snapshots);

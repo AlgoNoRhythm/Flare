@@ -27,7 +27,8 @@ describe('scanProject', () => {
     write('README.md', '# hi');
     const result = scanProject(tmp);
     expect(result.allFiles.sort()).toEqual(['README.md', 'src/a.ts', 'src/b.ts']);
-    expect(result.parsed.map((f) => f.path).sort()).toEqual(['src/a.ts', 'src/b.ts']);
+    // documents are parsed too, for the links in them
+    expect(result.parsed.map((f) => f.path).sort()).toEqual(['README.md', 'src/a.ts', 'src/b.ts']);
     const rootChildren = result.fileTree.children!.map((c) => c.name);
     expect(rootChildren).toEqual(['src', 'README.md']); // dirs first
   });

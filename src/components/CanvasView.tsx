@@ -100,6 +100,16 @@ export interface CanvasProps {
   onBoxSelect(ids: string[]): void;
   onNodeContextMenu(payload: { x: number; y: number; id: string | null }): void;
   onOpenFile(id: string, line?: number): void;
+  /**
+   * Read a file without leaving the graph.
+   *
+   * Separate from `onOpenFile` because they are different intentions: opening
+   * a file is going to work on it, and a double-click on the map is almost
+   * always "what *is* this" on the way to working on something else. Optional,
+   * so a canvas embedded in a briefing or a burst strip keeps the plain
+   * behaviour of opening the editor.
+   */
+  onPeekFile?(path: string): void;
   onToggleDir(dir: string): void;
   onStats(stats: GraphStats): void;
   /** current zoom, as a percentage, for the toolbar readout */
@@ -218,6 +228,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
     onBoxSelect,
     onNodeContextMenu,
     onOpenFile,
+    onPeekFile,
     onToggleDir,
     onStats,
     onZoom,
@@ -1032,6 +1043,12 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
       onOpenFile(sym.path, n.symbol?.line);
       return;
     }
+    // look first: prose renders, an image shows, code comes up in Monaco, and
+    // the editor is one button away inside the peek
+    if (onPeekFile) {
+      onPeekFile(n.id);
+      return;
+    }
     onOpenFile(n.id);
   };
 
@@ -1204,12 +1221,24 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
             : [];
           const claim = spoken.length > 0;
           const miss = query !== '' && !n.id.toLowerCase().includes(query);
+          /*
+           * A document reads as a document.
+           *
+           * A repo's prose — README, the plans folder, a decision an agent
+           * wrote down — is the part of the map a person is most likely to be
+           * looking for and the part that looked most like everything else:
+           * one more grey card with a filename on it. Marking it costs a class
+           * and a glyph, and it is the difference between finding the plan and
+           * scanning for it.
+           */
+          const doc = file?.doc === true;
           const classes = [
             'gcard',
             claim ? 'claimed' : '',
             n.kind === 'dir' ? 'folder' : '',
             n.kind === 'symbol' ? 'symbol' : '',
             n.kind === 'hub' ? 'hub' : '',
+            doc ? 'doc' : '',
             selected === n.id ? 'sel' : '',
             selectedPaths.has(n.id) && selected !== n.id ? 'msel' : '',
             unrev ? 'unrev' : '',
@@ -1273,6 +1302,14 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                 </span>
               ) : file ? (
                 <>
+                  {/* the glyph is a sibling of the name, not a child: `.gname`
+                      is a column, and a mark inside it would sit above the
+                      filename rather than beside it */}
+                  {doc && (
+                    <span className="gdoc" title="a document — double-click to read it here">
+                      ¶
+                    </span>
+                  )}
                   <span className="gname">{n.label}</span>
                   <span className="gbadges">
                     {/* who is *in* this file right now, ahead of every badge
@@ -1322,7 +1359,7 @@ export const CanvasView = forwardRef<GraphViewHandle, CanvasProps>(function Canv
                       >
                         {Math.round(coverage[n.id].pct)}%
                       </span>
-                    ) : !file.isTest && file.testedBy === 0 ? (
+                    ) : !doc && !file.isTest && file.testedBy === 0 ? (
                       <span className="gb crit" title="No test file imports this one, and there is no coverage data for it">
                         ∅t
                       </span>

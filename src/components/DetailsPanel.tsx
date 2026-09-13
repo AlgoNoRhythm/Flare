@@ -122,7 +122,33 @@ export function DetailsPanel({
         )}
       </div>
 
-      {node && (
+      {node?.doc ? (
+        /*
+         * A document is described, not scored.
+         *
+         * Everything below this — complexity, tests, coverage, blast radius,
+         * review risk — is a judgement with an implied fix, and none of them
+         * have one for a README. Showing "complexity 0 · tested by 0 test
+         * files" next to a plan is not a neutral zero, it reads as a file
+         * failing at things it was never doing. What is left is what is
+         * actually true of prose: how long it is, how often it is rewritten,
+         * and what it points at.
+         */
+        <div className="kv" data-testid="doc-facts">
+          <span className="k">lines</span>
+          <span>{num(node.loc)}</span>
+          <span className="k">churn</span>
+          <span>{plural(churn[nodeId] ?? 0, 'commit')}</span>
+          <span className="k" title="Links in this document that point at a file in the project">
+            links to
+          </span>
+          <span>{plural(node.outDegree, 'file')}</span>
+          <span className="k" title="Documents and code that link here">
+            linked from
+          </span>
+          <span>{plural(node.inDegree, 'file')}</span>
+        </div>
+      ) : node ? (
         <div className="kv">
           <span className="k">lines</span>
           <span>{num(node.loc)}</span>
@@ -212,7 +238,7 @@ export function DetailsPanel({
             </>
           )}
         </div>
-      )}
+      ) : null}
 
       <div className="actions">
         <button className="btn primary" onClick={() => onOpenFile(nodeId)}>

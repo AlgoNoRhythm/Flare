@@ -27,6 +27,7 @@ function node(id: string, over: Partial<GraphNode> = {}): GraphNode {
     orphan: false,
     cycleId: null,
     todos: 0,
+    doc: false,
     ...over,
   };
 }

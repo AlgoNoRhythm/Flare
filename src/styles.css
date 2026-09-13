@@ -8651,6 +8651,42 @@ button.btn:disabled {
   box-shadow: inset 0 0 0 1px var(--agent);
 }
 
+/*
+ * The provider chip: the same row, a different weight.
+ *
+ * It heads the sessions that follow it, so it reads as their label rather than
+ * as a fourth peer — squarer, quieter, and tinted rather than outlined, so the
+ * eye lands on the named agents first and finds the tool behind them only when
+ * it goes looking. The left margin is the gap between one tool's group and the
+ * next; the first one in the row does not need it.
+ */
+.review-agent.tool {
+  border-radius: var(--r-sm);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--agent) 14%, transparent);
+  color: var(--n11);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-left: 7px;
+}
+
+.review-agents > :first-child.review-agent.tool {
+  margin-left: 0;
+}
+
+.review-agent.tool:hover {
+  background: color-mix(in srgb, var(--agent) 22%, transparent);
+  color: var(--ink-1);
+}
+
+.review-agent.tool.on {
+  background: color-mix(in srgb, var(--agent) 26%, transparent);
+  border-color: var(--agent);
+  box-shadow: none;
+  color: var(--ink-1);
+}
+
 .review-agent-mark {
   color: var(--agent);
   font-size: 9px;
@@ -9404,4 +9440,138 @@ button.btn:disabled {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* ============================================================
+   Documents: marked on the graph, and readable without leaving it
+   ============================================================ */
+
+/*
+ * A markdown card, told apart from the code around it.
+ *
+ * The graph is mostly source and a person hunting for the README, the plan or
+ * the decision an agent wrote down was scanning a wall of identical grey
+ * plates for a filename. Prose gets the app's own accent rather than a lens
+ * colour: the lenses mean *measurements* — complexity, churn, coverage — and
+ * borrowing one of their hues for "this is a document" would be a third thing
+ * saying what those already say. The tint sits under the lens rail, so a
+ * document still reports whatever the current lens is reporting.
+ */
+.gcard.doc {
+  --card-body: linear-gradient(180deg, color-mix(in srgb, var(--accent-bg) 62%, var(--n5)) 0%, var(--n3) 100%);
+  border-color: var(--accent-line);
+}
+
+.gcard.doc:hover {
+  border-color: var(--accent-muted);
+}
+
+.gcard.doc.sel {
+  /* selection still wins: it is about right now, the doc mark is about always */
+  border-color: var(--accent);
+}
+
+/* the pilcrow, the one glyph on the card that says "this is prose" */
+.gcard .gdoc {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent-soft);
+  cursor: help;
+}
+
+/* ---- reading one over the graph ---- */
+
+.modal.file-peek {
+  /*
+   * A reading column, not a dialog that happens to hold text. The measure
+   * should not change with the surface the document is shown on.
+   *
+   * A cap, not a height: a three-paragraph decision record should be a
+   * three-paragraph card, not a full-height sheet with the text stranded at
+   * the top of it. A long file fills the cap and scrolls inside the body.
+   */
+  width: min(920px, 100%);
+  max-height: min(84vh, 100%);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* code gets a wider column than prose does: a wrapped line of source is
+   harder to read than a wrapped sentence */
+.modal.file-peek.code {
+  width: min(1100px, 100%);
+}
+
+.file-peek-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 12px 16px;
+  border-bottom: 1px solid var(--line-faint);
+  /* the header stays put while the file scrolls under it */
+  background: var(--n2);
+  flex: 0 0 auto;
+}
+
+.file-peek-mark {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--accent-soft);
+  flex: 0 0 auto;
+}
+
+.file-peek-title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.file-peek-title b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n13);
+  white-space: nowrap;
+}
+
+/* where it lives, quieter than what it is called */
+.file-peek-dir {
+  font-size: 11px;
+  color: var(--n9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-peek-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 34px 56px;
+}
+
+/* Monaco brings its own scrolling and its own padding, so the body gives it
+   the whole frame and gets out of the way. */
+.modal.file-peek.code .file-peek-body {
+  overflow: hidden;
+  padding: 0;
+}
+
+/* the height is set from Monaco's own content height — see FilePeek — so a
+   short file gets a short frame; this is only the floor it starts from */
+.file-peek-code {
+  width: 100%;
+  min-height: 120px;
+}
+
+/* the top of a file should not start hard against the header */
+.file-peek-body .doc-status {
+  padding: 8px 2px;
+}
+
+.file-peek-body .doc-image {
+  min-height: 0;
 }

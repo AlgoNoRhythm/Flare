@@ -252,6 +252,21 @@ describe('PredictiveEcho', () => {
     expect(t.screen.take()).toEqual([]);
   });
 
+  it('stops guessing once an inline TUI frames a repaint', () => {
+    const s = setup();
+    measure(s, 'a', 100);
+    s.echo.input('j');
+    expect(s.screen.take()).toEqual(['j']);
+
+    // Codex stays on the primary buffer and brackets each redraw instead;
+    // a guess drawn into a box that is about to be rewritten is wrong
+    s.echo.output('[?2026h[2K> [?2026l');
+    s.screen.parse();
+    s.screen.take();
+    s.echo.input('k');
+    expect(s.screen.take()).toEqual([]);
+  });
+
   it('erases a guess nothing echoed, and stops guessing until an echo returns', () => {
     const s = setup();
     measure(s, 'a', 100);

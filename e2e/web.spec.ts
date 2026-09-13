@@ -163,7 +163,8 @@ test.afterAll(() => {
 test('the graph loads in a browser tab, over the websocket', async ({ page }) => {
   await open(page, slugA);
   await expect(page.getByTestId('project-name')).toHaveText(path.basename(rootA));
-  await expect(page.getByTestId('stats')).toContainText('2 nodes · 1 edges');
+  // two code files and the README — the tooltip beside it still counts only code
+  await expect(page.getByTestId('stats')).toContainText('3 nodes · 1 edges');
   await expect(page.getByTestId('graph-container')).toBeVisible();
 });
 
@@ -205,12 +206,13 @@ test('the tree opens a file in the editor, and markdown renders', async ({ page 
 
 test('a change on disk arrives as a live event', async ({ page }) => {
   await open(page, slugA);
-  await expect(page.getByTestId('stats')).toContainText('2 nodes');
+  // two code files and the README
+  await expect(page.getByTestId('stats')).toContainText('3 nodes');
   fs.writeFileSync(
     path.join(rootA, 'src', 'extra.ts'),
     `import { util } from './util';\n\nexport const extra = util() + 1;\n`,
   );
-  await expect(page.getByTestId('stats')).toContainText('3 nodes · 2 edges', { timeout: 30_000 });
+  await expect(page.getByTestId('stats')).toContainText('4 nodes · 2 edges', { timeout: 30_000 });
   await expect(page.getByTestId('tree-file-src/extra.ts')).toBeVisible();
 });
 
@@ -271,7 +273,7 @@ test('two tabs on one project keep their own terminals', async ({ browser }) => 
 test('a second project is reachable at its own url on the same port', async ({ page }) => {
   await open(page, slugB);
   await expect(page.getByTestId('project-name')).toHaveText(/beta/);
-  await expect(page.getByTestId('stats')).toContainText('2 nodes · 1 edges');
+  await expect(page.getByTestId('stats')).toContainText('3 nodes · 1 edges');
 });
 
 test('the port itself is the start screen — the real one, not a stand-in', async ({ page }) => {
